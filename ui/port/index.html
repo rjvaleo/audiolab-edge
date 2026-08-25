@@ -56,11 +56,12 @@
     </div>
 
     <div class="panel-body hidden" id="paneSearch">
-      <input class="field" id="searchInput" placeholder="Search names, tags, machines&hellip;">
-      <button class="ghost" id="similarBtn">Sounds like the selected file</button>
-      <div class="fx-note" id="similarNote">Ranks the library by how the audio
-      actually sounds — length, loudness, brightness, noisiness, how sharply it
-      starts. It does not read the tags.</div>
+      <input class="field" id="searchInput" placeholder="Search by name&hellip;">
+      <!-- "Sounds like the selected file" was here. Search-by-sound ranked the
+           library by fingerprint and it does not travel: it is `search` and
+           `yamnet`, and `yamnet` is `tract-onnx`, thirteen megabytes of neural
+           network runtime. With twenty shipped sounds there is nothing for it
+           to rank. See `docs/PORT.md`. -->
       <div class="results" id="searchResults"></div>
     </div>
 

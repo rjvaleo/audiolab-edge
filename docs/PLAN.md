@@ -258,7 +258,19 @@ mechanical once it is made.
    be compressed?** Text goes four or five to one. If we have to do it
    ourselves, we embed the brotli'd form and set `content-encoding`, which
    shrinks the component *and* the transfer.
-2. **wasip1 or wasip2, and which Spin SDK version.**
+2. ~~**wasip1 or wasip2**~~ — **settled 25 Aug 2026: wasip2.**
+
+   Built against Spin 4.0.2 and spin-sdk 3.1.1, and it produces a genuine
+   component (`\0asm 0d00 0100`) rather than a core module Spin has to adapt.
+
+   Akamai say p3 is supported. It changes nothing: **Rust cannot emit a wasip3
+   component** — the target does not exist on stable 1.97.1 or on nightly. A
+   p3-capable runtime runs p2 components anyway, which is what the component
+   model's versioning is for, and the headline p3 feature is native async on a
+   component that serves files out of static memory and does no I/O at all.
+
+   If the target ships, moving is the same two lines in `spin.toml` that p1 to
+   p2 was. It is kept that cheap deliberately.
 3. **How the decoded sound reaches `edit::render`.** It takes a
    `Reader<S: RandomAccessSource>`, which is shaped for files; in the browser
    the samples arrive as a decoded `AudioBuffer`. An adapter, not an obstacle,

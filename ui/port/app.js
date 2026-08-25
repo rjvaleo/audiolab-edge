@@ -10119,59 +10119,50 @@ function updateDirty() {
 ///
 /// The first run measures every file, which takes a moment; after that the
 /// fingerprints live beside the index and it is instant.
-$('similarBtn').onclick = async () => {
-  const f = state.selectedFile;
-  const box = $('searchResults');
-  if (!f) { box.innerHTML = '<div class="dim">Select a sound first.</div>'; return; }
+// (Search-by-sound is gone: no fingerprints, no classifier, twenty sounds.)
 
-  box.innerHTML = '<div class="dim">Listening to the library…</div>';
-  let r;
-  try {
-    r = await api(`/api/similar?p=${encodeURIComponent(f.path)}&limit=40`);
-  } catch (e) {
-    box.innerHTML = `<div class="dim">${e.message}</div>`;
-    return;
-  }
+// **By name, over the sounds themselves.**
+//
+// This used to search *folders*, and match on tags, machine, category and
+// instrument as well as name. Two reasons it does not any more: there is one
+// folder here, so searching folders is searching a list of one; and the other
+// four fields are the classifier's, and the classifier does not travel.
+//
+// So it searches the sounds, on their names, and a hit opens in Grain — the
+// same gesture and the same destination as double-clicking one in Browse.
+let searchAll = null;
 
-  if (!r.results.length) { box.innerHTML = '<div class="dim">Nothing to compare against.</div>'; return; }
-  box.innerHTML = '';
-  const head = document.createElement('div');
-  head.className = 'dim';
-  head.textContent = `Like ${f.name} · ${r.indexed} sounds measured`;
-  box.appendChild(head);
-
-  for (const hit of r.results) {
-    const row = document.createElement('div');
-    row.className = 'result';
-    row.innerHTML =
-      `<span class="mono">${(hit.score * 100).toFixed(0)}%</span> ` +
-      `<span>${hit.name}</span> ` +
-      `<span class="dim">${hit.category} · ${hit.seconds.toFixed(2)}s · unlike in ${hit.differs}</span>`;
-    row.onclick = () => {
-      const file = { path: hit.path, name: hit.name };
-      selectFile(file);
-    };
-    box.appendChild(row);
-  }
-};
-
-$('searchInput').oninput = () => {
+$('searchInput').oninput = async () => {
   const q = $('searchInput').value.toLowerCase().trim();
   const box = $('searchResults');
   box.innerHTML = '';
   if (!q) return;
+
+  // Fetched once. The list is fixed for the life of the page — it is compiled
+  // into the component — so asking again per keystroke would be asking the
+  // same question of the same answer.
+  if (!searchAll) {
+    try {
+      searchAll = await api(`/api/files?folder=${encodeURIComponent('Sounds')}`);
+    } catch { searchAll = []; }
+  }
+
+  // Every term has to appear somewhere in the name. Two words are an AND, which
+  // is what a person typing two words means.
   const terms = q.split(/\s+/);
-  const hits = state.folders.filter((f) => {
-    const hay = `${f.name} ${f.tags} ${f.machine} ${f.categories} ${f.instruments}`.toLowerCase();
-    return terms.every((t) => hay.includes(t));
-  }).slice(0, 60);
+  const hits = searchAll
+    .filter((f) => terms.every((t) => f.name.toLowerCase().includes(t)))
+    .slice(0, 60);
 
   for (const f of hits) {
     const el = document.createElement('div');
     el.className = 'result';
-    el.innerHTML = `<div class="name"></div><div class="sub">${folderCount(f)} files · ${f.level1} › ${f.level2}</div>`;
+    el.innerHTML = '<div class="name"></div><div class="sub"></div>';
     el.querySelector('.name').textContent = f.name;
-    el.onclick = () => { showPane('left', 'browse'); toggleFolder(f.name); };
+    el.querySelector('.sub').textContent =
+      `${f.duration.toFixed(1)}s · ${(f.sampleRate / 1000).toFixed(0)} kHz · ` +
+      (f.channels === 1 ? 'mono' : `${f.channels}ch`);
+    el.onclick = () => openInEditor(f);
     box.appendChild(el);
   }
   if (!hits.length) box.innerHTML = '<div class="empty">No matches</div>';
