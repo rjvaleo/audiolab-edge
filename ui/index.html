@@ -3,55 +3,162 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Audiolab</title>
 <style>
-  :root {
-    --bg: #07090a;
-    --ink: #e7ebe9;
-    --mute: #6f7b79;
-    --line: #1c2225;
-    --sig: #5fd47a;
-  }
+  :root { --bg:#07090a; --ink:#e7ebe9; --mute:#6f7b79; --line:#1c2225; --sig:#5fd47a; --warn:#d98a63; }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--ink);
+    margin: 0; background: var(--bg); color: var(--ink);
     font: 15px/1.6 ui-monospace, "SF Mono", Menlo, monospace;
-    display: grid;
-    place-items: center;
-    padding: 2rem;
+    display: grid; place-items: center; padding: 2rem;
   }
-  .card {
-    width: min(46rem, 100%);
-    border: 1px solid var(--line);
-    border-radius: 4px;
-    padding: 2rem clamp(1.2rem, 5vw, 2.4rem);
+  .card { width: min(46rem, 100%); border: 1px solid var(--line); border-radius: 4px; padding: 2rem clamp(1.2rem,5vw,2.4rem); }
+  h1 { font-size: clamp(1.6rem,5vw,2.3rem); letter-spacing: -.02em; margin: 0 0 .4rem; font-weight: 600; }
+  .sub { color: var(--mute); margin: 0 0 1.8rem; }
+  button {
+    font: inherit; font-weight: 600; color: var(--bg); background: var(--sig);
+    border: 0; border-radius: 3px; padding: .6rem 1.4rem; cursor: pointer;
   }
-  h1 {
-    font-size: clamp(1.6rem, 5vw, 2.3rem);
-    letter-spacing: -.02em;
-    margin: 0 0 .4rem;
-    font-weight: 600;
-  }
-  .sub { color: var(--mute); margin: 0 0 2rem; }
-  dl { display: grid; grid-template-columns: max-content 1fr; gap: .5rem 1.4rem; margin: 0; }
+  button:disabled { background: var(--line); color: var(--mute); cursor: default; }
+  button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .row { display: flex; gap: .8rem; align-items: center; margin-bottom: 1.6rem; flex-wrap: wrap; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: .45rem 1.4rem; margin: 0; }
   dt { color: var(--mute); }
   dd { margin: 0; }
   .on { color: var(--sig); }
-  footer { margin-top: 2rem; padding-top: 1.2rem; border-top: 1px solid var(--line); color: var(--mute); font-size: 13px; }
+  .bad { color: var(--warn); }
+  footer { margin-top: 1.8rem; padding-top: 1.2rem; border-top: 1px solid var(--line); color: var(--mute); font-size: 13px; }
 </style>
 <div class="card">
   <h1>Audiolab</h1>
   <p class="sub">Granular audio, at the edge.</p>
-  <dl>
-    <dt>component</dt><dd class="on">running</dd>
-    <dt>target</dt><dd>wasm32-wasip1</dd>
-    <dt>assets</dt><dd>compiled in</dd>
-    <dt>state</dt><dd>none</dd>
-    <dt>engine</dt><dd>not yet — step&nbsp;2</dd>
+
+  <div class="row">
+    <button id="go" disabled>Loading…</button>
+    <span id="note" style="color:var(--mute)"></span>
+  </div>
+
+  <dl id="stats">
+    <dt>source</dt><dd id="s-src">—</dd>
+    <dt>engine</dt><dd id="s-eng">—</dd>
+    <dt>render</dt><dd id="s-ren">—</dd>
+    <dt>output</dt><dd id="s-out">—</dd>
   </dl>
-  <footer>
-    Nothing here makes a sound yet. This page exists to prove the toolchain
-    end&nbsp;to&nbsp;end before anything real is put in it.
+
+  <footer id="foot">
+    The engine is the one from the desktop build, compiled to WebAssembly and
+    run in this tab. Nothing is rendered on the server.
   </footer>
 </div>
+
+<script type="module">
+import { loadEngine, interleave, upmix, toAudioBuffer } from './engine.js';
+
+const $ = (id) => document.getElementById(id);
+const go = $('go');
+let ctx, engine, src, srcInfo, playing = null;
+
+const PARAMS = {
+  ratio: 8.0,          // eight times as long: a cloud, not a stretch
+  semitones: 0,
+  windowMs: 90,
+  densityHz: 26,
+  overlap: 3,
+  positionJitterMs: 260,
+  pitchJitterSemis: 5,
+  layers: 4,
+  panSpread: 0.9,      // a mono source, spread across the stereo field
+  seed: 7,
+};
+
+async function boot() {
+  try {
+    const t0 = performance.now();
+    engine = await loadEngine('./engine.wasm');
+    const tEng = performance.now() - t0;
+
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+    const bytes = await (await fetch('./tv-snips.opus')).arrayBuffer();
+    const decoded = await ctx.decodeAudioData(bytes);
+    srcInfo = {
+      seconds: decoded.duration,
+      rate: decoded.sampleRate,
+      channels: decoded.numberOfChannels,
+    };
+    // **Up to stereo on the way in, even from a mono file.**
+    //
+    // `pan_spread` places each grain somewhere across the stereo field, and it
+    // has nowhere to place anything in a one-channel buffer — a mono source
+    // gives a mono cloud, which is the one thing this visual-first build cannot
+    // afford. Most of the library is mono, so this is the normal case and not
+    // an edge one. Duplicating a channel costs a copy and buys the whole width.
+    const flat = interleave(decoded);
+    const stereo = decoded.numberOfChannels === 1 ? upmix(flat) : flat;
+    src = engine.put(stereo);
+    srcInfo.engineChannels = 2;
+
+    $('s-src').textContent =
+      `tv snips · ${decoded.duration.toFixed(2)}s · ${decoded.sampleRate} Hz · ` +
+      (decoded.numberOfChannels === 1 ? 'mono' : `${decoded.numberOfChannels}ch`);
+    $('s-eng').innerHTML = `<span class="on">loaded</span> · ${tEng.toFixed(0)} ms`;
+
+    go.disabled = false;
+    go.textContent = 'Make a cloud';
+  } catch (e) {
+    go.textContent = 'Failed';
+    $('note').innerHTML = `<span class="bad">${e.message}</span>`;
+    throw e;
+  }
+}
+
+go.addEventListener('click', async () => {
+  if (playing) { playing.stop(); playing = null; go.textContent = 'Make a cloud'; return; }
+  if (ctx.state === 'suspended') await ctx.resume();
+
+  go.disabled = true;
+  go.textContent = 'Rendering…';
+  // **A timeout, not a frame.**
+  //
+  // This only exists so the label paints before the main thread is taken for a
+  // couple of hundred milliseconds. The obvious way to write it is to wait for
+  // an animation frame — and a hidden tab never gets one, so the click hangs
+  // for ever and the render never starts. Found exactly that way: the button
+  // said "Rendering…" indefinitely while the engine had not been called once.
+  //
+  // `setTimeout` is throttled in a background tab but it does still fire, so
+  // the work happens either way. The desktop build learned this about its own
+  // poll loop; this is the same lesson in a different repository.
+  await new Promise((r) => setTimeout(r, 0));
+
+  const t0 = performance.now();
+  const out = engine.render(src, srcInfo.engineChannels, srcInfo.rate, PARAMS);
+  const ms = performance.now() - t0;
+
+  if (!out) { go.textContent = 'Nothing came back'; return; }
+
+  // Interleaved as it went in, so it comes back the same way. The old version
+  // of this line inferred the channel count from the output length and the
+  // ratio, which is arithmetic standing in for a fact we already have.
+  const buf = toAudioBuffer(ctx, out, srcInfo.engineChannels, srcInfo.rate);
+
+  const rt = buf.duration;
+  $('s-ren').innerHTML =
+    `${ms.toFixed(0)} ms for ${rt.toFixed(1)}s of sound · ` +
+    `<span class="on">${(rt * 1000 / ms).toFixed(0)}× faster than real time</span>`;
+  $('s-out').textContent =
+    `${buf.duration.toFixed(1)}s · ${buf.numberOfChannels === 2 ? 'stereo' : 'mono'} · ` +
+    `${(out.length * 4 / 1048576).toFixed(1)} MB of samples`;
+
+  const node = ctx.createBufferSource();
+  node.buffer = buf;
+  node.loop = true;
+  node.connect(ctx.destination);
+  node.start();
+  playing = node;
+
+  go.disabled = false;
+  go.textContent = 'Stop';
+});
+
+boot();
+</script>

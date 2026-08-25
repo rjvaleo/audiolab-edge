@@ -12,6 +12,13 @@ use spin_sdk::http::{IntoResponse, Request, Response};
 use spin_sdk::http_component;
 
 const INDEX: &str = include_str!("../../ui/index.html");
+const ENGINE_JS: &str = include_str!("../../ui/engine.js");
+/// The granular engine, built for the browser rather than for WASI. Two
+/// different wasm targets in one deployment, which is the whole architecture in
+/// one line: this one is *served*, not run.
+const ENGINE_WASM: &[u8] =
+    include_bytes!("../../engine/target/wasm32-unknown-unknown/release/audiolab_engine.wasm");
+const TV_SNIPS: &[u8] = include_bytes!("../../sounds/tv-snips.opus");
 
 /// What a path is served as. Kept explicit rather than guessed from an
 /// extension table — this build has few enough kinds of file to name them.
@@ -37,6 +44,9 @@ fn handle(req: Request) -> anyhow::Result<impl IntoResponse> {
     // build will ever need.
     let (body, kind) = match path {
         "/" | "/index.html" => (INDEX.as_bytes(), mime("html")),
+        "/engine.js" => (ENGINE_JS.as_bytes(), mime("js")),
+        "/engine.wasm" => (ENGINE_WASM, mime("wasm")),
+        "/tv-snips.opus" => (TV_SNIPS, mime("opus")),
         _ => {
             return Ok(Response::builder()
                 .status(404)
@@ -49,9 +59,20 @@ fn handle(req: Request) -> anyhow::Result<impl IntoResponse> {
     Ok(Response::builder()
         .status(200)
         .header("content-type", kind)
-        // Everything here is immutable for the life of a deployment: the build
-        // is the content, so a new build is a new URL's worth of bytes.
-        .header("cache-control", "public, max-age=3600")
+        // **`no-cache`, until the URLs carry a hash.**
+        //
+        // Everything here really is immutable for the life of a deployment —
+        // but the paths are not: `/engine.wasm` means one thing today and
+        // another after the next build, at the same URL. A long `max-age` on
+        // that is a browser holding last week's engine with no way to be told.
+        //
+        // Found the moment it was written: an hour's `max-age` on `/` served
+        // the previous page straight back after a rebuild.
+        //
+        // `no-cache` is not "do not store" — it is "revalidate first", so a
+        // 304 still costs nothing but the round trip. When the assets are
+        // content-hashed, they become `immutable` and only the page stays here.
+        .header("cache-control", "no-cache")
         .body(body.to_vec())
         .build())
 }

@@ -41,31 +41,47 @@ longer carries it.
 
 ## Where it is up to
 
-**Step 1 of 6.** The component serves one page that says hello. Nothing makes a
-sound yet.
+**Step 2 of 6 — and it was the one that could have failed.** The granular
+engine runs in the browser, on a sound compiled into the component, and it is
+not close:
+
+    tv snips · 6.38s · 48 kHz mono, as 44 KB of Opus
+    259 ms to render 51.0s of stereo cloud
+    197x faster than real time
+
+Native, the same render is 179 ms — so **WebAssembly costs about 1.5x**, with no
+SIMD and nothing tuned. There is no argument for rendering on the server.
 
 | | |
 |---|---|
 | 1 | **the repository** — `spin.toml`, a page, and a component that serves it ✅ |
-| 2 | the engine in an AudioWorklet, playing one shipped sound — *the hinge* |
+| 2 | **the engine in the browser, playing a shipped sound** ✅ |
 | 3 | the Room |
 | 4 | Ridgeline, the theme, the controls |
-| 5 | the sounds: encode, pack, check the container in a real Safari |
+| 5 | the rest of the sounds |
 | 6 | deploy |
 
-Step 2 is where the approach either works or does not. Everything after it is
-carrying across code that already runs.
+### Not an AudioWorklet, and that turned out to be right
+
+The plan said worklet. What it needed was an offline render: `granular` takes a
+whole buffer and returns a whole buffer, so the cloud is made in one call and
+then played and looped. A quarter of a second of work for fifty seconds of
+sound, once — against a worklet's obligation to keep up 128 samples at a time,
+for ever.
+
+A worklet becomes worth having when a control has to move *while* it plays.
+Until then this is simpler, and it is what makes the page start playing on its
+own.
 
 ## What it weighs
 
-An empty component — the page, the routing and the Spin runtime, and nothing
-else — is **211 KB**, or 60 KB brotli'd. That is the floor everything else sits
-on. The budget it has to fit inside:
+An empty component — the page, the routing and the Spin runtime — is **211 KB**.
+With the engine and one sound compiled into it, **315 KB**. The budget:
 
 | | raw |
 |---|---|
-| this, today | 211 KB |
-| the granular engine, measured | 53 KB |
+| the component, with the engine and one sound inside it | 315 KB |
+| — of which the granular engine | 54 KB |
 | Room + Ridgeline | 269 KB |
 | interface, before trimming | 848 KB |
 | twenty sounds, Opus 96k | ~1,480 KB |

@@ -17,6 +17,9 @@ source = "component/target/wasm32-wasip1/release/audiolab_edge.wasm"
 # `docs/PLAN.md`.
 
 [component.audiolab-edge.build]
-command = "cargo build --release --target wasm32-wasip1"
+# The engine first: the component embeds the .wasm the engine build produces,
+# so a component built before it would embed the previous one — or fail to
+# build at all on a clean checkout.
+command = "cargo build --release --manifest-path ../engine/Cargo.toml --target wasm32-unknown-unknown && cargo build --release --target wasm32-wasip1"
 workdir = "component"
-watch = ["src/**/*.rs", "../ui/**/*", "Cargo.toml"]
+watch = ["src/**/*.rs", "../ui/**/*", "../engine/src/**/*.rs", "../sounds/**/*", "Cargo.toml"]
