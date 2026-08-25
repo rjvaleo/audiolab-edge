@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio Library</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+
+<!-- The menu bar row is gone: it cost a row of height and held one square.
+     Kept as a detached node so the menu code has somewhere to mount when it
+     lands, without reserving vertical space until then. -->
+<!-- A slim menu bar. It holds more than the row it replaced ever did, at
+     three quarters of its height. -->
+<header class="menubar"><nav class="menus" id="menuBar"></nav></header>
+<div class="menu-pop hidden" id="menuPop"></div>
+<span class="hidden" id="rateLabel"></span>
+<span class="hidden" id="libraryLabel"></span>
+
+<div class="shell">
+
+  <!-- left rail: the two workspaces, then the tools inside Browse -->
+  <nav class="rail" id="leftRail">
+    <button class="mode-btn" data-mode="edit" title="Edit the open sounds">
+      <span class="ic">✎</span><span class="lb">Edit</span>
+    </button>
+    <button class="mode-btn active" data-mode="overview" title="Browse the library">
+      <span class="ic">▤</span><span class="lb">Browse</span>
+    </button>
+    <!-- The room at full size, with every control it has beside it rather than
+         floating over it. The overlay in the dock is the same controls in a
+         corner of a small canvas; this is where they are actually usable. The
+         sound driving it is the open document's, the same one the dock's room
+         is drawn from. -->
+    <button class="mode-btn" data-mode="room" title="The room, full size, with all of its controls">
+      <span class="ic">◈</span><span class="lb">Room</span>
+    </button>
+
+    <div class="rail-sep"></div>
+
+    <button class="rail-btn active" data-panel="browse" title="Library">≡</button>
+    <button class="rail-btn" data-panel="search" title="Search">⌕</button>
+    <button class="rail-btn" data-panel="scan" title="Scan">◴</button>
+    <button class="rail-btn" data-panel="import" title="Library folder">⌂</button>
+    <button class="rail-btn" data-panel="record" title="Record">●</button>
+
+    <div class="rail-sep"></div>
+
+    <!-- Labelled, and below a rule. The five above are library tools and read
+         as a set; this is somewhere else you go, and as an unnamed glyph at the
+         bottom of that set it was simply not findable. -->
+    <button class="rail-btn rail-theme" data-panel="theme" title="Palette and colours">
+      <span class="ic">◑</span><span class="lb">Theme</span>
+    </button>
+  </nav>
+
+  <!-- left panel: the whole library, playable -->
+  <aside class="panel left" id="leftPanel">
+    <!-- Drag the edge to resize; double-click to put it back. Inside the panel
+         rather than between it and the shell, so it moves with the panel and
+         disappears with it when the panel is collapsed. -->
+    <div class="panel-grip" id="leftGrip"
+         title="Drag to resize the panel · double-click to put it back"></div>
+    <div class="panel-head">
+      <span id="leftPanelTitle">Browse</span>
+      <input class="filter-box" id="treeFilter" placeholder="filter&hellip;">
+      <button class="x" id="rescanBtn" title="Re-read the library — for sounds added from outside the app">⟳</button>
+      <button class="x" id="closeLeft">×</button>
+    </div>
+
+    <div class="panel-body" id="paneBrowse">
+      <label class="tree-opt" title="Show files with no audio header — cache, sidecars and raw data, read as headerless PCM. Mostly noise, occasionally worth hearing.">
+        <input type="checkbox" id="playAll">
+        <span>Play all files</span>
+        <span class="hint">headerless data</span>
+      </label>
+      <div class="tree" id="tree"></div>
+    </div>
+
+    <div class="panel-body hidden" id="paneSearch">
+      <input class="field" id="searchInput" placeholder="Search names, tags, machines&hellip;">
+      <button class="ghost" id="similarBtn">Sounds like the selected file</button>
+      <div class="fx-note" id="similarNote">Ranks the library by how the audio
+      actually sounds — length, loudness, brightness, noisiness, how sharply it
+      starts. It does not read the tags.</div>
+      <div class="results" id="searchResults"></div>
+    </div>
+
+    <!-- The one place audio enters this program from outside. -->
+    <div class="panel-body hidden" id="paneRecord">
+      <div class="rec-device">
+        <label class="k">Input</label>
+        <select class="mini" id="recDevice"></select>
+      </div>
+      <div class="rec-meter" id="recMeter" aria-label="Input level">
+        <i class="rec-bar" id="recBarL"></i><i class="rec-bar" id="recBarR"></i>
+      </div>
+      <div class="rec-transport">
+        <button class="primary" id="recArm">Arm</button>
+        <button class="rec-go hidden" id="recStart" title="Start recording">●</button>
+        <button class="ghost hidden" id="recStop">Stop &amp; keep</button>
+      </div>
+      <div class="rec-readout mono" id="recReadout">not armed</div>
+      <div class="rec-name hidden" id="recNameRow">
+        <label class="k">Name</label>
+        <input class="filter-box" id="recName" placeholder="Take&hellip;">
+      </div>
+      <p class="note" id="recNote">Arming opens the input and shows its level
+      without keeping anything, so you can set a gain first. A take is written
+      as a new WAV in <strong>Recordings</strong> inside the library — it never
+      overwrites and never touches anything already there.</p>
+    </div>
+
+    <div class="panel-body hidden" id="paneScan">
+      <div class="stat-block" id="scanTotals"></div>
+      <div class="divider"></div>
+      <div class="scan-controls">
+        <button class="primary" id="startScan">Scan library</button>
+        <button class="ghost hidden" id="stopScan">Stop</button>
+      </div>
+      <div class="progress-wrap hidden" id="scanProgress">
+        <div class="progress-label"><span id="scanCurrent"></span><span class="mono" id="scanCount"></span></div>
+        <div class="progress"><div class="progress-fill" id="scanFill"></div></div>
+      </div>
+      <p class="note">Scanning reads headers and classifies every file. It never
+      renames, moves or deletes anything.</p>
+    </div>
+
+    <div class="panel-body hidden" id="paneTheme">
+      <!-- The editor. A miniature of the interface, three pickers, and every
+           change on screen as you make it. See `docs/THEME-EDITOR.md`. -->
+      <div class="field-label">Make your own</div>
+      <div class="theme-mini" id="themeMini">
+        <div class="tm-rail">
+          <span class="tm-icon on"></span><span class="tm-icon"></span><span class="tm-icon"></span>
+        </div>
+        <div class="tm-body">
+          <div class="tm-bar">
+            <span class="tm-btn">Cut</span><span class="tm-btn">Crop</span>
+            <span class="tm-btn on">Export</span>
+            <span class="tm-title">a sound.aif</span>
+          </div>
+          <div class="tm-lane"><i></i></div>
+          <div class="tm-panels">
+            <div class="tm-panel">
+              <div class="tm-head">Time &amp; Pitch</div>
+              <div class="tm-row"><span class="tm-k">Stretch</span>
+                <span class="tm-slider"><i style="width:62%"></i></span>
+                <span class="tm-v">4.00×</span></div>
+              <div class="tm-row"><span class="tm-k">Pitch</span>
+                <span class="tm-slider"><i style="width:38%"></i></span>
+                <span class="tm-v">+0.0 st</span></div>
+              <div class="tm-steps">
+                <span class="tm-t1">text</span><span class="tm-t2">second</span>
+                <span class="tm-t3">dim</span><span class="tm-t4">dimmer</span>
+              </div>
+            </div>
+            <div class="tm-panel tm-panel-2">
+              <div class="tm-head">Master</div>
+              <div class="tm-meters"><i style="height:72%"></i><i style="height:58%"></i></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- No hex fields. Nobody chooses a theme by typing a colour code —
+           you turn the hue until it looks right, decide how colourful and how
+           contrasty, and pick the accent against it. See `docs/THEME-EDITOR.md`. -->
+      <div class="ts-ed-head">
+        <span class="ts-ed-title" id="tsEditing">Select a palette, or make one</span>
+        <span class="ts-tag hidden" id="tsMode"></span>
+      </div>
+
+      <div class="ts-editor hidden" id="tsEditor">
+        <label class="ts-field">
+          <span class="field-label">Name</span>
+          <input class="field" id="tsName">
+        </label>
+        <div class="ts-field">
+          <span class="field-label" id="tsColoursLabel">Colours</span>
+          <div class="ts-swatches" id="tsSwatches"></div>
+        </div>
+        <!-- The waveform belongs to the palette now. It is still not *derived*
+             from it — which colour reads best against a sound is a matter of
+             the sound, not of the surfaces behind it — but a theme carries its
+             own, so choosing a theme sets the sound's colour too. -->
+        <div class="ts-field">
+          <span class="field-label">Waveform</span>
+          <div class="seg wave-seg" id="waveColours">
+            <button class="seg-btn" data-wave="blue"><i></i>Blue</button>
+            <button class="seg-btn" data-wave="green"><i></i>Green</button>
+            <button class="seg-btn" data-wave="red"><i></i>Red</button>
+            <button class="seg-btn" data-wave="purple"><i></i>Purple</button>
+          </div>
+          <div class="fx-row wave-own">
+            <label class="wave-own-label" for="waveOwn">Your own</label>
+            <input type="color" id="waveOwn" value="#39ff5a" title="Any colour you like — the waveform takes it as you move">
+            <button class="ghost" id="waveReset">Reset</button>
+          </div>
+          <div class="fx-note">Neon, so the sound reads against the surface
+          behind it. The grain marks keep their own colour.</div>
+        </div>
+        <div class="fx-note">Direction is read, not chosen: a palette that
+        averages light becomes a light theme, one that averages dark becomes a
+        dark one. Surfaces borrow the hue and a damped share of the saturation,
+        but their lightness comes from a fixed ladder — which is what keeps text
+        legible whatever the palette holds.</div>
+        <div class="fx-row ts-actions">
+          <button class="ghost" id="tsApply">Apply</button>
+          <button class="ghost" id="tsDuplicate">Duplicate</button>
+          <button class="ghost danger" id="tsDelete">Delete</button>
+        </div>
+        <div class="fx-row ts-actions">
+          <button class="ghost" id="tsTokensBtn">Show tokens</button>
+          <button class="ghost" id="tsCopy">Copy JSON</button>
+          <button class="ghost" id="tsImport">Import JSON&hellip;</button>
+        </div>
+        <div class="ts-tokens hidden" id="tsTokens"></div>
+        <div class="ts-error hidden" id="tsError"></div>
+      </div>
+
+      <div class="divider"></div>
+      <div class="field-label">Palette</div>
+      <div class="ts-head">
+        <input class="field ts-filter" id="tsFilter" placeholder="Filter&hellip;">
+        <button class="ghost ts-new" id="tsNew">+ New</button>
+      </div>
+      <div class="fx-note">A palette gives colour and direction; the ladder of
+      surfaces, text and borders is derived from it, so contrast holds whatever
+      the colours are. Good, warning and bad keep their own hues — a theme is not
+      allowed to repaint what they mean.</div>
+      <div class="theme-list" id="themeList"></div>
+      <div class="divider"></div>
+      <div class="fx-row">
+        <button class="ghost" id="themeNone">No theme</button>
+        <button class="ghost" id="themePlain" title="Light palettes only: take the tint out of the surfaces and leave it in the borders and text">Plain surfaces</button>
+      </div>
+      <div class="divider"></div>
+      <div class="field-label">Your own</div>
+      <div class="fx-row">
+        <input class="mono" id="themeColors" placeholder="#1a1a24 #7c5cff #2ee6a8 …">
+        <button class="primary" id="themeAdd">Add</button>
+      </div>
+      <div class="fx-note">Two colours is enough; four to six reads best.</div>
+    </div>
+
+    <div class="panel-body hidden" id="paneImport">
+      <div class="field-label">Library folder</div>
+      <div class="mono path-display" id="libraryPath">none chosen</div>
+      <div class="fx-row">
+        <button class="primary" id="pickLibrary">Choose folder&hellip;</button>
+        <button class="ghost" id="rescanLibrary">Re-scan</button>
+      </div>
+      <div class="fx-note">Pointing somewhere new re-indexes from scratch.
+      Nothing in the library is renamed, moved or deleted.</div>
+      <div class="divider"></div>
+      <div class="stat-block" id="libraryStats"></div>
+    </div>
+  </aside>
+
+  <!-- centre: the selected sound, or the editor -->
+  <main class="centre">
+
+    <!-- open documents: edit mode only -->
+
+    <!-- edit toolbar: only in the edit window -->
+    <div class="edittools hidden" id="editTools">
+      <div class="tabbar hidden" id="tabBar"></div>
+      <div class="vsep"></div>
+      <button class="ghost" data-op="cut">Cut</button>
+      <button class="ghost" data-op="crop">Crop</button>
+      <button class="ghost" data-op="silence">Silence</button>
+      <button class="ghost" data-op="fadeIn">Fade in</button>
+      <button class="ghost" data-op="fadeOut">Fade out</button>
+      <button class="ghost" data-op="reverse">Reverse</button>
+      <select class="mini" id="fadeShape" title="Fade curve">
+        <option value="equalPower">equal power</option>
+        <option value="linear">linear</option>
+      </select>
+      <div class="vsep"></div>
+      <!-- Where an edit lands. On by default, as Peak's Auto Snap is: a cut
+           that does not start and end at the centre line is a click. -->
+      <select class="mini" id="snapUnit"
+              title="Snap edits to: nothing, the nearest zero crossing, or a fixed grid">
+        <option value="zero">snap: zero</option>
+        <option value="off">snap: off</option>
+        <option value="cd">snap: CD</option>
+        <option value="ps2">snap: PS2</option>
+        <option value="xbox">snap: Xbox</option>
+      </select>
+      <div class="vsep"></div>
+      <button class="ghost" data-op="marker">Marker</button>
+      <button class="ghost" data-op="region">Region</button>
+      <div class="spacer"></div>
+      <span class="edited-flag mono hidden" id="editedFlag">edited</span>
+      <button class="ghost" id="undoBtn" disabled>Undo</button>
+      <button class="ghost" id="redoBtn" disabled>Redo</button>
+      <button class="ghost" id="revertBtn">Revert</button>
+      <select class="mini" id="exportBits"
+              title="Export bit depth. 16 and 24 are AIFF; 32-bit float is AIFC, which is the same file with a float sample type.">
+        <option value="16">16-bit</option>
+        <option value="24" selected>24-bit</option>
+        <option value="32">32-bit float</option>
+      </select>
+      <button class="primary" id="exportBtn"
+              title="Render to a new AIFF beside the original, named for the engine, ratio, pitch and window — with every setting written into the file">Export</button>
+      <button class="ghost" id="videoBtn"
+              title="Film the room with the sound it is drawn from. Opens the export box, where the range, the size and the frame rate are chosen.">Video</button>
+      <!-- The menu of visuals is twenty-five long and most sessions use four of
+           them. This is where you say which four, and in what order. -->
+      <button class="ghost icon-btn" id="visMenuBtn"
+              title="Which visuals are offered, and in what order.">&#9881;</button>
+    </div>
+    <!-- Anchored under the gear rather than floated in the middle of the screen:
+         it edits the menu you are about to use, and a box that covers the thing
+         it is about is a box you have to close to check your work. -->
+    <div class="vis-menu-admin hidden" id="visMenuAdmin"></div>
+
+    <!-- Only while an export is running. Its own row, so no button anywhere
+         moves when it appears. -->
+    <div class="export-progress hidden" id="exportProgress">
+      <span class="ep-phase" id="epPhase">Exporting</span>
+      <div class="progress"><div class="progress-fill" id="epFill"></div></div>
+      <span class="ep-pct" id="epPct">0%</span>
+      <button class="tiny" id="epStop" title="Stop this export and discard the part-written file">Stop</button>
+    </div>
+
+    <!-- whole-file overview with the zoom window marked -->
+    <div class="overview" id="overview">
+      <canvas id="overviewCanvas"></canvas>
+      <div class="ov-window" id="ovWindow"></div>
+      <div class="ov-cue" id="ovCue"></div>
+      <div class="ov-playhead" id="ovPlayhead"></div>
+    </div>
+
+    <div class="ruler hidden" id="ruler"></div>
+
+    <div class="lane" id="lane">
+      <canvas id="waveCanvas"></canvas>
+      <canvas id="specCanvas"></canvas>
+      <!-- The grains, on the sound they read from. A faint mark for every one
+           in the schedule, and a bright one for those sounding right now. See
+           `drawGrainLayer`. Above the waveform, below the selection and the
+           playhead — it is a thing about the sound, not a thing you edit. -->
+      <canvas id="grainLayer"></canvas>
+      <!-- The line the grain marks are struck from. It defaulted to the middle
+           of the lane, which is not the middle of the waveform once the
+           spectrogram takes the bottom of it — so it is a grip you place. A
+           short tab at the left edge rather than a full-width band, because the
+           rest of that line has to stay available for selecting. -->
+      <div class="grain-centre hidden" id="grainCentre" title="Drag to move the grain centre line · double-click to centre on the waveform"><i></i></div>
+      <div class="selection hidden" id="selection"></div>
+      <div class="cue" id="cue"><i></i></div>
+      <!-- How wide a swathe of the file the cloud is reading right now. See
+           `updateReadBand`: measured from the grains, not guessed from a
+           control, so spray, layer scatter and the grain length are all in it. -->
+      <div class="read-band" id="readBand"></div>
+      <div class="playhead" id="playhead"></div>
+      <!-- The boundary between the waveform and the spectrogram, draggable.
+           Only present with the spectrogram on; see `.lane.split` in the
+           stylesheet, which owns the split and reads it from one custom
+           property so the two canvases cannot disagree about where it is. -->
+      <div class="lane-split" id="laneSplit" title="Drag to resize the spectrogram — double-click to put it back"></div>
+      <div class="lane-empty" id="laneEmpty">Select a sound on the left.</div>
+    </div>
+
+    <!-- The room, full size, with its controls beside it.
+         **Nothing in here is a copy.** The room, its control panel and the
+         transport are the same elements the dock uses, moved in when this view
+         opens and put back when it closes — see `roomAdopt`. A second canvas
+         and a second set of controls would be two things to keep in step, and
+         this program has already learned twice what that costs: the live room
+         and the exported film drifted apart in the background colour, and the
+         theme editor's swatches drifted from the palette they were editing.
+         One set of controls cannot disagree with itself. -->
+    <div class="roomview hidden" id="roomView">
+      <aside class="rv-admin" id="roomAdmin">
+        <!-- Two tabs rather than one long column. The controls run to fourteen
+             rows and the palette to fourteen things that each open an editor;
+             stacked, everything below the fold is found by scrolling past
+             something unrelated. -->
+        <div class="rv-admin-head">
+          <button class="rv-tab active" data-rvtab="controls">Room</button>
+          <button class="rv-tab" data-rvtab="sound">Sound</button>
+          <button class="rv-tab" data-rvtab="geom">Shape</button>
+          <button class="rv-tab" data-rvtab="paint">Colour</button>
+        </div>
+        <!-- `#roomEdit` is moved in here. The panel is laid out differently at
+             this width — see `.rv-admin .room-edit` — but it is the same DOM
+             carrying the same handlers. -->
+        <div class="rv-admin-body" id="roomAdminBody"></div>
+        <!-- The stretch and the grain cloud: what the room is drawing. Moved in
+             from the dock, which this workspace hides. -->
+        <div class="rv-admin-body hidden" id="roomSoundBody"></div>
+        <!-- The room's own shape, as against the camera's pose. Built by
+             `rgPanel`. The pose is not in here on purpose — it is dragged on
+             the room itself, and `docs/ROOM-EDITOR.md` is the argument. -->
+        <div class="rv-admin-body hidden" id="roomGeomBody"></div>
+        <!-- The palette. Built by `rpPanel`; only ever shown here, because the
+             dock's overlay has no room for it. -->
+        <div class="rv-admin-body hidden" id="roomPaintBody"></div>
+      </aside>
+      <div class="rv-grip" id="roomGrip"
+           title="Drag to resize the controls · double-click to put it back"></div>
+      <section class="rv-stage" id="roomStage">
+        <div class="rv-bar" id="roomStageBar">
+          <!-- Which visualiser you are looking at: the same class of decision as
+               what shape it is drawn in, so it sits beside the frame. -->
+          <span class="re-tag">VIEW</span>
+          <div class="re-frames" id="rgModules"></div>
+        </div>
+        <!-- `#masterBus` is moved in here. Everything that feeds it is gated on
+             whether it is on screen rather than on where it sits, so the meters,
+             the poll and the room's own feed follow it. -->
+        <div class="rv-room" id="roomStageRoom"></div>
+        <div class="rv-foot" id="roomFoot"></div>
+      </section>
+    </div>
+
+    <div class="transportbar hidden" id="transportBar">
+  <span class="mono current-file" id="titleFile">no file selected</span>
+  <span class="mode-label" id="modeLabel">Browse</span>
+
+  <div class="vsep"></div>
+  <button class="tbtn play" id="playBtn" title="Play/pause">▶</button>
+  <button class="tbtn" id="stopBtn" title="Stop — returns to the cue. Double-click to return to the beginning of the file; the cue stays where it is.">■</button>
+  <button class="tbtn loop" id="loopBtn" title="Loop: off">⟲</button>
+  <button class="tbtn rec" id="recBtn" title="Capture what is playing">●</button>
+  <span class="no-audio hidden" id="noAudio">no audio device</span>
+  <span class="rec-label mono dim" id="recLabel"></span>
+  <span class="loop-label mono dim" id="loopLabel"></span>
+
+  <div class="vsep"></div>
+  <span class="mono time" id="timeNow">00:00.000</span>
+
+  <div class="vsep"></div>
+  <div class="zoom">
+    <button class="tbtn small" id="zoomOut" title="Zoom out">–</button>
+    <span class="mono dim" id="zoomLabel">fit</span>
+    <button class="tbtn small" id="zoomIn" title="Zoom in">+</button>
+    <button class="tbtn small" id="zoomFit" title="Fit">⤢</button>
+  </div>
+
+  <div class="zoom">
+    <button class="tbtn small on" id="followBtn" title="Follow playhead: keep it on screen">⇥</button>
+    <select class="mini" id="followMode" title="How the view keeps up with the playhead">
+      <option value="scroll">scroll</option>
+      <option value="page">page</option>
+    </select>
+  </div>
+
+  <div class="vsep"></div>
+  <div class="metastrip" id="metaStrip"></div>
+
+  <input type="range" id="volume" min="0" max="1" step="0.01" value="0.85" title="Volume">
+</div>
+
+    <!-- Presets, in the strip that used to sit empty under the transport, and
+         the dock's own tabs alongside them: as a column down the left they cost
+         the granular controls 58px of every screen. -->
+    <div class="presetbar hidden" id="presetBar">
+      <nav class="dock-rail">
+        <button class="dock-tab active" data-dock="stretch" title="Time, pitch and grains">
+          <span class="ic">⧗</span><span class="lb">Time &amp; Pitch</span>
+        </button>
+        <button class="dock-tab" data-dock="effects" title="Effect chain">
+          <span class="ic">⚙</span><span class="lb">FX</span>
+        </button>
+        <button class="dock-tab" data-dock="visuals" title="Spectrogram and meters">
+          <span class="ic">◍</span><span class="lb">Visuals</span>
+        </button>
+        <button class="dock-tab" data-dock="automation" title="Breakpoint automation">
+          <span class="ic">⌁</span><span class="lb">Automation</span>
+        </button>
+        <button class="dock-tab" data-dock="regions" title="Regions">
+          <span class="ic">⧉</span><span class="lb">Regions</span>
+        </button>
+      </nav>
+      <div class="vsep"></div>
+      <span class="pb-label">Preset</span>
+      <select class="mini" id="presetPick"><option value="">— none —</option></select>
+      <label class="check preset-with-sound" title="Recall the sound the preset was made from as well, and replace the whole chain with the preset's. Off, it only changes settings on modules you already have — it adds nothing and removes nothing.">
+        <input type="checkbox" id="presetWithSound"> with sound
+      </label>
+      <button class="ghost" id="presetSave">Save as&hellip;</button>
+      <button class="ghost" id="presetManage">Manage&hellip;</button>
+      <button class="ghost" id="presetDelete">Delete</button>
+      <!-- Random lives here rather than on the engine row, which already had to
+           hold five engines and a reset at the narrowest dock width and lost its
+           labels the moment a second button joined it. A preset is a saved set
+           of these values, so "make me a new set" belongs beside them. -->
+      <button class="ghost" id="stretchRandom"
+              title="Throw every control in the tray somewhere at random. The engine stays where it is, and the seed is reported so a good accident can be found again.">Random</button>
+    </div>
+
+    <!-- The preset manager. Every preset, and every value inside the one you
+         pick — the settings are stored whether or not the engine that reads
+         them is the one selected, so this is the only place the whole of a
+         preset can be seen at once. -->
+    <!-- Play the pitch from the computer keyboard.
+         The letters are the usual tracker layout — A is the tonic and the row
+         above carries the notes between — but what each one plays comes from
+         the *tuning*, not from twelve semitones. See `noteKeys` in app.js. -->
+    <!-- The grain views, as a window.
+         They used to sit in the stretch tray taking half its width and
+         redrawing beside the controls. `#grainVis` is *moved* into here when the
+         window opens rather than rebuilt, so the view picker, the 2D canvas, the
+         3D iframe and the legend are the same elements the drawing code already
+         holds — nothing had to be rewired. -->
+    <div class="kb-panel hidden" id="visWindow">
+      <div class="kb-card vis-window-card">
+        <header class="kb-head" id="visWindowDrag">
+          <h2>Grains</h2>
+          <span class="modal-sub" id="visWindowSub"></span>
+          <button class="ghost" id="visWindowClose" title="Close">Close</button>
+        </header>
+        <div class="vis-window-body" id="visWindowBody"></div>
+      </div>
+    </div>
+
+    <div class="kb-panel hidden" id="keyboardModal">
+      <div class="kb-card">
+        <header class="kb-head" id="kbDrag">
+          <h2>Keys</h2>
+          <span class="modal-sub" id="kbScale"></span>
+          <button class="ghost" id="kbClose" title="Close">Close</button>
+        </header>
+        <div class="kb-body">
+          <div class="kb-piano" id="kbPiano"></div>
+          <!-- One line, cycling. Side by side these forced the panel to 626px
+               for a 286px keyboard; taking turns they cost one line and can say
+               more than they did. See `cycleHint`. -->
+          <div class="kb-legend">
+            <span class="kb-hint" id="kbHint"></span>
+            <span class="kb-oct" id="kbOctave"></span>
+            <span class="kb-now" id="kbNow"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="presetManager">
+      <div class="modal-card">
+        <header class="modal-head">
+          <h2>Presets</h2>
+          <span class="modal-sub" id="pmCount"></span>
+          <button class="ghost" id="pmClose" title="Close">Close</button>
+        </header>
+        <div class="pm-body">
+          <aside class="pm-list" id="pmList"></aside>
+          <section class="pm-detail" id="pmDetail"></section>
+        </div>
+        <footer class="modal-foot">
+          <span class="pm-status" id="pmStatus"></span>
+          <button class="ghost" id="pmDuplicate">Duplicate</button>
+          <button class="ghost danger" id="pmDelete">Delete</button>
+          <button class="ghost" id="pmRevert">Revert</button>
+          <button class="primary" id="pmSave">Save changes</button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- Asked only when the loop is on. Export with the loop off is unchanged
+         and opens nothing. -->
+    <div class="modal hidden" id="exportLoop">
+      <div class="modal-card export-card">
+        <header class="modal-head">
+          <h2>Export loop</h2>
+          <span class="modal-sub" id="elRange"></span>
+          <button class="ghost" id="elClose" title="Close">Close</button>
+        </header>
+        <div class="export-body">
+          <div class="fx-row">
+            <label class="export-label" for="elRepeats">Repeats</label>
+            <input class="mono" type="number" id="elRepeats" min="1" max="512" step="1" value="4">
+            <span class="fx-note" id="elLength"></span>
+          </div>
+          <div class="fx-row">
+            <label class="export-label" for="elTail">Tail</label>
+            <button class="tiny switch" id="elTail">Tail</button>
+            <span class="fx-note">Let the reverbs and delays finish sounding
+            after the last repeat, instead of cutting them off.</span>
+          </div>
+          <div class="fx-row">
+            <label class="export-label">Range</label>
+            <button class="tiny switch on" id="elScopeSel"
+              title="Film the selection, repeated as set above.">Selection</button>
+            <button class="tiny switch" id="elScopeAll"
+              title="Film the whole file, once, ignoring the loop and the repeats.">Whole file</button>
+            <span class="fx-note" id="elScopeNote"></span>
+          </div>
+          <div class="fx-row">
+            <label class="export-label" for="elVideoSize">Video</label>
+            <select class="field" id="elVideoSize"></select>
+            <select class="field" id="elVideoFps"></select>
+            <span class="fx-note">The room, filmed with the sound it is drawn
+            from. The picture runs on past the end while the room empties, and
+            the sound is padded with silence to meet it.</span>
+          </div>
+        </div>
+        <footer class="modal-foot">
+          <span class="pm-status" id="elStatus"></span>
+          <button class="ghost" id="elWhole">Whole file instead</button>
+          <button class="ghost" id="elVideo">Export video</button>
+          <button class="primary" id="elGo">Export</button>
+        </footer>
+      </div>
+    </div>
+
+    <div class="regions hidden" id="regions"></div>
+
+    <!-- overview: stats for the selected sound -->
+    <div class="statsview" id="statsView">
+      <div class="stats-grid" id="statsGrid"></div>
+      <div class="why" id="whyBox"></div>
+    </div>
+
+    <!-- edit window: effects and visuals -->
+    <div class="dock hidden" id="dock">
+      <!-- Drag the top edge to make the panel taller. The controls in here run
+           to more than a fixed height can hold, and scrolling a panel of
+           sliders means losing sight of the ones you are not touching. -->
+      <div class="dock-resize" id="dockResize" title="Drag to resize · double-click to reset"></div>
+      <div class="dock-panes">
+
+      <!-- A horizontal rail of modules with a meter at each end, rather than a
+           list beside a parameter pane: signal flow reads left to right, and
+           the module you are adjusting is the one you are looking at. -->
+      <div class="dock-body rack-body hidden" id="dockEffects">
+        <div class="fx-module-viewport">
+          <div class="fx-end-meter" id="fxInputMeter" aria-label="Effects input meter"></div>
+          <div class="fx-module-rail" id="fxModuleRail"></div>
+          <div class="fx-end-meter" id="fxOutputMeter" aria-label="Effects output meter"></div>
+          <button class="fx-add" id="fxAdd" title="Add an effect module" aria-label="Add an effect module">+</button>
+        </div>
+        <div class="fx-picker hidden" id="fxPicker">
+          <div class="fx-picker-head"><span>Add module</span><button class="ghost" id="fxPickerClose">Close</button></div>
+          <div class="fx-picker-groups" id="fxPickerGroups"></div>
+        </div>
+      </div>
+
+      <div class="dock-body" id="dockStretch">
+        <div class="grain-split">
+          <!-- Every stretch and grain control. Borrowed by the Room workspace,
+               which hides the dock — without that they are simply unreachable
+               there, and a room you cannot change the sound of is a room you
+               cannot design. See `ROOM_VIEW_PARTS`. -->
+          <div class="grain-controls" id="grainControls">
+            <!-- One panel, like Extended: the groups inside are separated by a
+                 rule rather than each carrying its own box. -->
+            <div class="cpanel grain-standard">
+              <div id="stretchParams"></div>
+              <div class="stretch-readout">
+                <span class="mono dim" id="stretchOut"></span>
+                <!-- What the callback is costing, beside the controls that cost
+                     it. Window, layers and density each drive block cost and
+                     they multiply; nothing on screen said so until the sound
+                     broke up. See `paintLoad`. -->
+                <span class="mono dim engine-load" id="engineLoad"></span>
+              </div>
+              <!-- The cloud, drawn where it actually is, and draggable. See
+                   `drawCloudPad`: this is the read head and its spread, over
+                   the real grains and the real waveform. -->
+              <div class="cloud-pad-wrap">
+                <canvas id="cloudPad" class="cloud-pad"
+                  title="The grain cloud over the source. Drag the box to move the read head; drag an edge to widen the spray or the pitch scatter."></canvas>
+                <span class="mono dim cloud-pad-read" id="cloudPadRead"></span>
+              </div>
+              <div id="grainShape"></div>
+              <div id="grainPitch"></div>
+            </div>
+
+            <div class="cpanel grain-extended" id="extPanel">
+              <div id="extEngine"></div>
+              <div id="extGrain"></div>
+            </div>
+          </div>
+          <!-- The grain views used to live here, taking half the tray and
+               redrawing every frame beside the controls. They are a window now:
+               Window ▸ Grain visualiser. The markup moves wholesale rather than
+               being rebuilt, so the view picker, the canvas, the iframe and the
+               legend are the same elements the code already drives — it is
+               `buildVisPop` that adopts them. -->
+          <div class="tray-right">
+          <div class="grain-vis hidden" id="grainVis">
+            <div class="vis-pick" id="visPick">
+              <button class="vis-tab active" data-vis="0" title="The original swarm">Swarm 2D</button>
+              <button class="vis-tab" data-vis="1" title="Output time against source time — the stretch as a slope">Shear</button>
+              <button class="vis-tab" data-vis="2" title="Time wound into a helix — strands are the overlap">Braid</button>
+              <button class="vis-tab" data-vis="3" title="The free cloud in three dimensions">Swarm 3D</button>
+              <button class="vis-tab" data-vis="4" title="An octave to a shell — drift becomes rotation">Shells</button>
+              <button class="vis-tab" data-vis="5" title="The hop grid as a crystal, melted by the jitters">Lattice</button>
+              <button class="vis-tab suite" id="visSuite" title="V1 the object · V2 the moment">V1</button>
+              <button class="vis-open" id="visOpen" title="Open a floating panel with every control">&#9974;</button>
+            </div>
+            <canvas id="grainCanvas"></canvas>
+            <iframe id="grainFrame" class="hidden" title="3D grain views"></iframe>
+            <div class="vis-legend">
+              <span><i class="sw hot"></i>bright / sharp</span>
+              <span><i class="sw cold"></i>dark / flat</span>
+              <span>size = level</span>
+              <span>distance = time from playhead</span>
+              <span class="mono dim" id="grainCount"></span>
+            </div>
+          </div>
+
+          <!-- The master bus, in the room the grain views left behind. One
+               surface, not three boxes: the goniometer over the spectrum, the
+               meters hard right. Everything here is measured after the fader
+               and after the soft ceiling, so it is what left the speakers and
+               not a stage on the way there. See `docs/MASTER-BUS.md`. -->
+          <div class="master-bus" id="masterBus">
+            <div class="mb-main">
+              <!-- The box. The spectrum runs along its floor and travels
+                   backwards as the sound plays, the Lissajous hangs in the sky
+                   with time as its third axis, and the ladders stand at the
+                   right end. See `docs/VISUALISER.md`. -->
+              <div class="mb-cell mb-cell-3d">
+                <canvas id="visGl"
+                  title="The master bus as a room. Depth is time: what you hear now is at the front and travels away from you. Double-click for full screen."></canvas>
+                <!-- The ridgeline's own canvas. **Not shared with the room**: a
+                     canvas can only ever have one kind of context, and once
+                     `#visGl` is WebGL it can never give a 2D one. One is shown
+                     and the other hidden; each is built the first time it is
+                     asked for. -->
+                <canvas id="visRidge" class="hidden"
+                  title="Stacked lines, each one hiding what is behind it. The waveform of the moment, pulled to the middle."></canvas>
+                <!-- The room built out of ridgelines, on its own canvas for the
+                     same reason: this one is Babylon's, and a canvas gives one
+                     kind of context for ever. See `docs/ROOM-3D.md`. -->
+                <canvas id="visRoom3d" class="hidden"
+                  title="The stacked lines on all five surfaces of the room — floor, ceiling, both walls, and the sleeve itself on the back wall."></canvas>
+                <!-- The rebuild: one room with real light in it. See
+                     `docs/PORT-PLAN.md`. -->
+                <canvas id="visStage" class="hidden"
+                  title="One room with real light, real air and real particles in it — the room everything else is being rebuilt into."></canvas>
+                <span class="mono mb-note" id="mbPeakHz"></span>
+                <!-- The room editor's furniture. Frame shapes, the numbers the
+                     dragging has produced, and a way back. Everything that
+                     actually edits is a grab on the room itself — see
+                     `docs/ROOM-EDITOR.md`. The overlay does not take the
+                     pointer; only its buttons do. -->
+                <!-- Always there, because a thing you can pose should say so
+                     without being looked up in a menu. Top right: the FFT row
+                     is bottom left and the peak readout is bottom right. -->
+                <button class="re-open" id="roomEditOpen"
+                  title="The room: which parts are drawn, which frame shape, and the camera. Drag the room to move it.">Room</button>
+                <!-- Live grain telemetry, in the room's corner. Its own
+                     layer, so it goes away with the rest. -->
+                <div class="room-data mono hidden" id="roomData"></div>
+                <!-- The handles. Only while the room is being edited: they are
+                     furniture for the editing and not part of the picture, and
+                     they must never be in a filmed frame. Placed by
+                     `paintRoomHandles` from the room's own projection, so a
+                     handle is always on the thing it drags. -->
+                <div class="room-handles hidden" id="roomHandles"></div>
+                <!-- The ridgeline's controls. Its own panel rather than rows
+                     added to the room's: the two modules share a contract and
+                     nothing else, and a panel that showed FOG beside WINDOW
+                     would be describing neither. -->
+                <div class="room-edit hidden" id="ridgeEdit"></div>
+                <div class="room-edit hidden" id="room3dEdit"></div>
+                <div class="room-edit hidden" id="stageEdit"></div>
+                <div class="room-edit hidden" id="roomEdit">
+                  <div class="re-row">
+                    <span class="re-tag">LAYERS</span>
+                    <div class="re-frames" id="reLayers"></div>
+                  </div>
+                  <div class="re-row">
+                    <span class="re-tag">STREAMS</span>
+                    <div class="re-frames" id="reStreams"></div>
+                  </div>
+                  <div class="re-row">
+                    <span class="re-tag">RING</span>
+                    <input class="re-slider" id="reRing" type="range"
+                      min="15" max="300" step="1"
+                      title="How big the ring and the skin are drawn. The camera holds the pose; this is the size.">
+                  </div>
+                  <div class="re-row">
+                    <span class="re-tag">DRIVE</span>
+                    <input class="re-slider" id="reRingDrive" type="range"
+                      min="0" max="800" step="1"
+                      title="How hard the sound pushes the ring out of round. Well past 1× at the top — a breath becomes a crown.">
+                  </div>
+                  <div class="re-row">
+                    <span class="re-tag">SMOOTH</span>
+                    <input class="re-slider" id="reRingPoints" type="range"
+                      min="48" max="2048" step="8"
+                      title="How finely the ring is drawn. The curve is interpolated between the analyser's samples, so this is not capped by how many it sends — the top of the range is a smooth curve with no corners and no nodes in it.">
+                  </div>
+                  <div class="re-row">
+                    <span class="re-tag">STROKE</span>
+                    <input class="re-slider" id="reRingEdge" type="range"
+                      min="0" max="250" step="1"
+                      title="How thick the dark border under the ring's lines is, as a fraction of the ring's radius. Nothing at the bottom.">
+                  </div>
+                  <div class="re-row">
+                    <span class="re-tag">CLOUD</span>
+                    <input class="re-slider" id="reGrainDensity" type="range"
+                      min="4" max="100" step="1"
+                      title="How much of the cloud is drawn. The schedule is untouched — this thins the picture, not the sound.">
+                  </div>
+                  <div class="re-row">
+                    <span class="re-tag">EDGE</span>
+                    <label class="re-check" title="The thick band over the frame you are hearing now. Off, the frame is still drawn — it is the ridge line the band sits on.">
+                      <input type="checkbox" id="reLeadThick"><span>thick</span>
+                    </label>
+                  </div>
+                  <div class="re-row">
+                    <span class="re-tag">FOG</span>
+                    <label class="re-check" title="Distance fog: the far end of the room takes the fog's colour and loses its own, the way distance really works.">
+                      <input type="checkbox" id="reFog"><span>on</span>
+                    </label>
+                    <select class="field" id="reFogType" title="How the fog thickens with distance.">
+                      <option value="1">Exp</option>
+                      <option value="2">Exp²</option>
+                      <option value="0">Linear</option>
+                      <option value="3">Height</option>
+                    </select>
+                    <input class="re-slider" id="reFogDensity" type="range"
+                      min="0" max="200" step="1" title="How thick it is.">
+                    <input class="re-colour" id="reFogColour" type="color"
+                      title="The colour of the air. Distant things tend towards it.">
+                  </div>
+                  <div class="re-row">
+                    <span class="re-tag">MIST</span>
+                    <label class="re-check" title="Smoke dripping off the grain shapes: what each one shed a moment ago, falling as it goes.">
+                      <input type="checkbox" id="reMist"><span>on</span>
+                    </label>
+                    <input class="re-slider" id="reMistAmount" type="range"
+                      min="6" max="100" step="1"
+                      title="How much of it — how many points each grain sheds.">
+                    <input class="re-slider" id="reMistLength" type="range"
+                      min="4" max="600" step="1"
+                      title="How long the drips are: how far back along its own journey a grain's mist reaches.">
+                  </div>
+                  <div class="re-row">
+                    <span class="re-tag">FILL</span>
+                    <label class="re-check" title="Fill the grain shapes in. The wires are still drawn on top, so a filled grain keeps its far side.">
+                      <input type="checkbox" id="reGrainFill"><span>on</span>
+                    </label>
+                    <button class="re-btn" id="reGrainFillBg"
+                      title="Fill with the background instead of a colour: the shape takes the light out of whatever is behind it rather than painting over it.">BG</button>
+                    <input class="re-colour" id="reGrainFillColour" type="color"
+                      title="The colour to fill the shapes with, when not filling with the background.">
+                  </div>
+                  <div class="re-row">
+                    <span class="re-tag">BURN</span>
+                    <input class="re-slider" id="reGrainBright" type="range"
+                      min="15" max="300" step="1"
+                      title="How brightly the grains burn.">
+                  </div>
+                  <div class="re-row">
+                    <span class="re-tag">BLOCK</span>
+                    <div class="re-frames" id="reChunks"></div>
+                    <input class="re-slider" id="reOpacity" type="range"
+                      min="5" max="100" step="1"
+                      title="How strongly the data sits on the wall">
+                  </div>
+                  <!-- Moved above the room in the full view, where the wireframe
+                       puts it: the frame shape is a question about the picture
+                       you are composing, so it belongs over the picture rather
+                       than at the bottom of a list of settings. -->
+                  <div class="re-row" id="reFrameRow">
+                    <span class="re-tag">FRAME</span>
+                    <div class="re-frames" id="reFrames"></div>
+                  </div>
+                  <div class="re-foot">
+                    <button class="re-btn re-reset" id="reClear"
+                      title="Empty the room: the trail and every grain still in the air. The camera and the settings are left alone.">Clear</button>
+                    <button class="re-btn re-reset" id="reReset"
+                      title="Put this frame's camera back to the one in the source">Reset</button>
+                  </div>
+                  <div class="re-nums mono" id="reNums"
+                    title="What the dragging has made. Click to copy, to paste into vis-gl.js as the new default."></div>
+                </div>
+                <div class="room-edit hidden" id="textEdit"></div>
+                <div class="mb-res" id="mbRes">
+                  <button class="mb-res-btn" data-fft="1024">1k</button>
+                  <button class="mb-res-btn" data-fft="2048">2k</button>
+                  <button class="mb-res-btn active" data-fft="4096">4k</button>
+                  <button class="mb-res-btn" data-fft="8192">8k</button>
+                  <button class="mb-res-btn" data-fft="16384">16k</button>
+                </div>
+              </div>
+            </div>
+            <div class="mb-side">
+              <div class="mb-cell mb-cell-vu">
+                <canvas id="mbVu"
+                  title="0 VU is −18 dBFS (EBU R68). The solid body is 300 ms of RMS; the dimmer extension above it is the peak."></canvas>
+              </div>
+              <div class="mb-reads" id="mbReads">
+                <span class="mb-k"></span><span class="mb-h">L</span><span class="mb-h">R</span>
+                <span class="mb-k">VU</span>
+                <span class="mono mb-v" id="mbLvu">—</span>
+                <span class="mono mb-v" id="mbRvu">—</span>
+                <span class="mb-k">RMS</span>
+                <span class="mono mb-v" id="mbLrms">—</span>
+                <span class="mono mb-v" id="mbRrms">—</span>
+                <span class="mb-k">PEAK</span>
+                <span class="mono mb-v" id="mbLpk">—</span>
+                <span class="mono mb-v" id="mbRpk">—</span>
+                <span class="mb-k">HOLD</span>
+                <span class="mono mb-v" id="mbLhold">—</span>
+                <span class="mono mb-v" id="mbRhold">—</span>
+                <span class="mb-k">CORR</span>
+                <span class="mono mb-v" id="mbCorrBig">—</span>
+                <span class="mb-word" id="mbCorrWord"></span>
+              </div>
+              <span class="mono mb-state" id="mbState"></span>
+            </div>
+          </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="dock-body hidden" id="dockVisuals">
+        <div class="fx">
+          <div class="fx-head">Spectrogram</div>
+          <div class="fx-row">
+            <label class="check"><input type="checkbox" id="specOn"> Show</label>
+            <div class="seg" id="fftSizes">
+              <button class="seg-btn" data-fft="512">512</button>
+              <button class="seg-btn active" data-fft="1024">1024</button>
+              <button class="seg-btn" data-fft="2048">2048</button>
+              <button class="seg-btn" data-fft="4096">4096</button>
+            </div>
+          </div>
+        </div>
+        <div class="fx wide-fx">
+          <div class="fx-head">Live spectrum</div>
+          <canvas id="visCanvas" class="viscanvas"></canvas>
+        </div>
+        <div class="fx">
+          <div class="fx-head">Levels</div>
+          <div id="meters"></div>
+        </div>
+        <div class="fx">
+          <div class="fx-head">Stereo field</div>
+          <div id="stereo"></div>
+        </div>
+      </div>
+
+      <div class="dock-body automation-body hidden" id="dockAutomation">
+        <div class="automation-toolbar">
+          <button class="primary" id="automationAdd">Add lane</button>
+          <label class="check" title="Write a control's moves into its lane while the transport is running. Touch records while the hand is on the control; Latch keeps recording until you stop.">
+            Record
+            <select id="automationRecord">
+              <option value="off">off</option>
+              <option value="touch">touch</option>
+              <option value="latch">latch</option>
+            </select>
+          </label>
+          <label class="check" title="Stop every lane without deleting any of them">
+            <input type="checkbox" id="automationBypass"> Bypass all
+          </label>
+          <button class="ghost" id="automationSimplify" title="Drop breakpoints the curve does not need">Simplify</button>
+          <button class="ghost" id="automationLoop" title="Wrap every lane's curve over the selection">Loop selection</button>
+          <button class="ghost" id="automationInvert" title="Turn every lane upside down">Invert</button>
+          <button class="ghost" id="automationUndo">Undo</button>
+          <button class="ghost" id="automationRedo">Redo</button>
+          <span class="automation-note" id="automationNote"></span>
+        </div>
+        <div class="automation-lanes" id="automationLanes"></div>
+      </div>
+
+      <div class="dock-body hidden" id="dockRegions">
+        <div class="region-list" id="regionList"></div>
+      </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- right panel: tagging -->
+  <aside class="panel right" id="rightPanel">
+    <div class="panel-head">
+      <span id="rightPanelTitle">Tags</span>
+      <button class="x" id="closeRight">×</button>
+    </div>
+    <div class="panel-body" id="paneInspect">
+      <div class="edit-group">
+        <div class="tag-source" id="tagSource"></div>
+        <label>Level 1<input class="field" id="editLevel1"></label>
+        <label>Level 2<input class="field" id="editLevel2"></label>
+        <label>Tags<input class="field" id="editTags"></label>
+        <label>Notes<textarea class="field" id="editNotes" rows="3"
+          placeholder="context the classifier cannot infer&hellip;"></textarea></label>
+      </div>
+      <div class="divider"></div>
+      <div class="field-label">Your tags</div>
+      <div id="yourTags" class="sonic-tags"></div>
+      <input class="field" id="addUserTag" placeholder="add a tag of your own&hellip;"
+             list="userTagVocab" autocomplete="off">
+      <datalist id="userTagVocab"></datalist>
+      <div id="learnedTags" class="sonic-tags"></div>
+      <div class="field-label">Heard as</div>
+      <div id="heardTags" class="sonic-tags"></div>
+      <div class="field-label">Sounds like</div>
+      <div id="sonicTags" class="sonic-tags"></div>
+    </div>
+    <div class="panel-foot">
+      <span class="dirty" id="dirtyLabel"></span>
+      <button class="ghost" id="discardBtn">Discard</button>
+      <button class="primary" id="commitBtn">Commit</button>
+    </div>
+  </aside>
+
+  <nav class="rail" id="rightRail">
+    <button class="rail-btn active" id="tagsToggle" title="Tags panel">✎</button>
+  </nav>
+
+</div>
+
+<div class="scrim hidden" id="scrim"></div>
+
+<!-- folder picker -->
+<div class="modal hidden" id="pickerModal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <span>Choose the audio library folder</span>
+      <button class="x" id="pickerClose">×</button>
+    </div>
+    <div class="picker">
+      <div class="picker-places" id="pickerPlaces"></div>
+      <div class="picker-main">
+        <div class="mono picker-path" id="pickerPath"></div>
+        <div class="picker-list" id="pickerList"></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="ghost" id="pickerUp">Up one level</button>
+      <div class="spacer"></div>
+      <button class="primary" id="pickerChoose">Use this folder</button>
+    </div>
+  </div>
+</div>
+
+<!-- One small dialog for every command that needs a number before it can run.
+     Peak has a separate one per command; there is nothing in any of them but a
+     few labelled fields, so this is built from a description instead. -->
+<div class="modal hidden" id="askModal">
+  <div class="modal-box ask-box">
+    <div class="modal-head"><span id="askTitle"></span><button class="x" id="askClose">×</button></div>
+    <div class="ask-body" id="askBody"></div>
+    <div class="modal-foot">
+      <span class="ask-note" id="askNote"></span>
+      <div class="spacer"></div>
+      <button class="ghost" id="askCancel">Cancel</button>
+      <button class="primary" id="askOk">OK</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast hidden" id="toast"></div>
+
+<!-- Before app.js: the theme engine is plain script, and `Theme` has to exist
+     by the time the rail is built. -->
+<script src="/theme-palettes.js"></script>
+<script src="/theme-derive.js"></script>
+<script src="/grain-shapes.js"></script>
+<!-- The room's palette. Before vis-gl.js is not required — nothing runs at
+     load — but it is read by app.js on its first frame. -->
+<script src="/room-paint.js"></script>
+<!-- The ridgeline: the CP 1919 pulses, and the visualiser measured against
+     them. See `docs/RIDGELINE.md`. -->
+<script src="/ridge-data.js"></script>
+<!-- The engine, then the module that uses it. See `docs/ROOM-3D.md`. -->
+<!-- Every visualiser, described in one place. Before the modules, because it
+     is what they are looked up in. See `docs/PORT-PLAN.md`. -->
+<script src="/vis-registry.js"></script>
+<script src="/vendor/babylon.js"></script>
+<script src="/room3d.js"></script>
+<script src="/stage.js"></script>
+<script src="/ridge.js"></script>
+<script src="/room-text.js"></script>
+<script src="/mp4.js"></script>
+<script src="/vis-gl.js"></script>
+<script src="/video-export.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
