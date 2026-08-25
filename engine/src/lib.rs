@@ -203,34 +203,80 @@ pub extern "C" fn doc_apply(ptr: *const u8, len: usize) -> usize {
 }
 
 /// Peaks for the waveform, in the shape `/api/peaks` returns.
+///
+/// **Of the document, not of the source.** The desktop route takes its length
+/// from `list.frames()` and renders the edit list — so with a stretch active
+/// the waveform is as long as the thing that plays. Here the rendered cloud
+/// *is* that, so peaks are read from it when there is one and from the source
+/// when there is not.
+///
+/// That matters more than it sounds. `state.view.frames` comes from this
+/// response and the timeline is laid out on it; peaks of a six-second source
+/// under a fifty-second document put the playhead in a different place from the
+/// picture under it.
+///
+/// Three series a channel, as the desktop sends: the extremes for the outline
+/// and RMS for the body. A waveform drawn from extremes alone is a silhouette
+/// with no weight in it.
 #[no_mangle]
-pub extern "C" fn peaks_json(buckets: usize) -> usize {
-    let n = buckets.clamp(1, 100_000);
-    let channels = DOC.with(|d| d.borrow().as_ref().map(|l| l.channels as usize).unwrap_or(1));
-    let out = SRC.with(|s| {
-        let src = s.borrow();
-        let frames = src.len() / channels.max(1);
+pub extern "C" fn peaks_json(cols: usize, from: f64, to: f64) -> usize {
+    let channels = DOC.with(|d| d.borrow().as_ref().map(|l| l.channels as usize).unwrap_or(2)).max(1);
+    let rate = DOC.with(|d| d.borrow().as_ref().map(|l| l.sample_rate).unwrap_or(48_000));
+
+    // Copied out rather than borrowed across the measuring closure. Both live
+    // in a `RefCell`, and `say` at the end of it would want the same borrow.
+    let buf: Vec<f32> = {
+        let rendered = OUT.with(|o| o.borrow().len());
+        if rendered > 0 {
+            OUT.with(|o| o.borrow().clone())
+        } else {
+            SRC.with(|s| s.borrow().clone())
+        }
+    };
+
+    let measure = |buf: &[f32]| -> Value {
+        let frames = buf.len() / channels;
+        let a = (from.max(0.0) as usize).min(frames);
+        let b = if to > from { (to as usize).min(frames) } else { frames };
+        let b = b.max(a + 1).min(frames.max(1));
+        let n = cols.clamp(1, 20_000);
+
         let mut chans = Vec::with_capacity(channels);
         for c in 0..channels {
-            let mut max = Vec::with_capacity(n);
-            let mut min = Vec::with_capacity(n);
-            for b in 0..n {
-                let a = b * frames / n;
-                let z = (((b + 1) * frames) / n).max(a + 1).min(frames);
-                let (mut hi, mut lo) = (0.0f32, 0.0f32);
-                for f in a..z {
-                    let v = src[f * channels + c];
+            let (mut max, mut min, mut rms) =
+                (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
+            for i in 0..n {
+                let s0 = a + (b - a) * i / n;
+                let s1 = (a + (b - a) * (i + 1) / n).max(s0 + 1).min(frames);
+                let (mut hi, mut lo, mut sum) = (0.0f32, 0.0f32, 0.0f64);
+                for f in s0..s1 {
+                    let v = buf[f * channels + c];
                     if v > hi { hi = v }
                     if v < lo { lo = v }
+                    sum += (v as f64) * (v as f64);
                 }
-                max.push(Value::Num(hi as f64));
-                min.push(Value::Num(lo as f64));
+                let count = (s1 - s0).max(1);
+                max.push(Value::Num(round4(hi)));
+                min.push(Value::Num(round4(lo)));
+                rms.push(Value::Num(round4((sum / count as f64).sqrt() as f32)));
             }
-            chans.push(Value::obj().set("max", Value::Arr(max)).set("min", Value::Arr(min)));
+            chans.push(
+                Value::obj()
+                    .set("max", Value::Arr(max))
+                    .set("min", Value::Arr(min))
+                    .set("rms", Value::Arr(rms)),
+            );
         }
-        Value::obj().set("channels", Value::Arr(chans))
-    });
-    say(&out)
+
+        Value::obj()
+            .set("channels", Value::Arr(chans))
+            .set("columns", n as f64)
+            .set("frames", frames as f64)
+            .set("from", a as f64)
+            .set("to", b as f64)
+            .set("sampleRate", rate as f64)
+    };
+    say(&measure(&buf))
 }
 
 /// What the master bus is doing right now, in the shape `/api/engine/master`

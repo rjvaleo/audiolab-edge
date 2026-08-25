@@ -256,13 +256,19 @@
         return json(e.said(e.ex.doc_json()));
       }
 
+      // `cols`, not `n` — the interface asks for one column per pixel of the
+      // lane it is about to draw into, and passes a window when zoomed.
       case '/api/peaks': {
         const path = url.searchParams.get('p');
         if (!path) return json({ error: 'no path given' }, 400);
         await open(path);
+        // A stretched document is only as long as its render, so make sure
+        // there is one before measuring it.
+        await cloud();
         const e = await engine();
-        const n = Math.max(1, Math.min(100000, +url.searchParams.get('n') || 2048));
-        return json(e.said(e.ex.peaks_json(n)));
+        const cols = Math.max(1, Math.min(20000, +url.searchParams.get('cols') || 2048));
+        const n = e.ex.peaks_json(cols, +url.searchParams.get('from') || 0, +url.searchParams.get('to') || 0);
+        return json(e.said(n));
       }
 
       // What the desktop reports about the buffer it is filling. There is no
