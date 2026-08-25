@@ -1,0 +1,19 @@
+[
+ {
+  "name": "tv-snips.opus",
+  "path": "Sounds/tv-snips.opus",
+  "subdir": "",
+  "bytes": 45262,
+  "duration": 6.385,
+  "sampleRate": 48000,
+  "channels": 1,
+  "bits": 16,
+  "format": "OPUS",
+  "category": "SAMPLE",
+  "confidence": "high",
+  "instrument": "",
+  "machine": "",
+  "bpm": "",
+  "why": "6.38s, shipped"
+ }
+]

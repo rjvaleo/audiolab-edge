@@ -11,18 +11,50 @@
 use spin_sdk::http::{IntoResponse, Request, Response};
 use spin_sdk::http_component;
 
-const INDEX: &str = include_str!("../../ui/index.html");
+// ── the interface ──
+//
+// `ui/port/` is the desktop build's interface, copied across whole and not
+// edited: `app.js` is byte-for-byte the same file. What replaced the server is
+// `local-server.js`, which swaps the global `fetch`. See `docs/PORT.md`.
+//
+// Listed one by one rather than walked, because a component cannot walk a
+// directory it does not have — and because being able to read what ships is
+// worth more here than being able to add a file without thinking.
+macro_rules! ui {
+    ($name:literal) => {
+        include_str!(concat!("../../ui/port/", $name))
+    };
+}
+
+const INDEX: &str = ui!("index.html");
+const APP_JS: &str = ui!("app.js");
+const APP_CSS: &str = ui!("app.css");
+const THEME_PALETTES: &str = ui!("theme-palettes.js");
+const THEME_DERIVE: &str = ui!("theme-derive.js");
+const GRAIN_SHAPES: &str = ui!("grain-shapes.js");
+const ROOM_PAINT: &str = ui!("room-paint.js");
+const RIDGE_DATA: &str = ui!("ridge-data.js");
+const VIS_REGISTRY: &str = ui!("vis-registry.js");
+const ROOM3D: &str = ui!("room3d.js");
+const STAGE: &str = ui!("stage.js");
+const RIDGE: &str = ui!("ridge.js");
+const ROOM_TEXT: &str = ui!("room-text.js");
+const MP4: &str = ui!("mp4.js");
+const VIS_GL: &str = ui!("vis-gl.js");
+const VIDEO_EXPORT: &str = ui!("video-export.js");
+
+/// The server, in the page.
+const LOCAL_SERVER: &str = include_str!("../../ui/local-server.js");
+/// The bridge from JavaScript into the engine.
 const ENGINE_JS: &str = include_str!("../../ui/engine.js");
-const APP_JS: &str = include_str!("../../ui/app.js");
-const ROOM_JS: &str = include_str!("../../ui/room.js");
-/// The Room, copied from the desktop build and not edited. It reaches for
-/// nothing outside itself, which is the only reason that was possible.
-const VIS_GL_JS: &str = include_str!("../../ui/vis-gl.js");
 /// The granular engine, built for the browser rather than for WASI. Two
 /// different wasm targets in one deployment, which is the whole architecture in
 /// one line: this one is *served*, not run.
 const ENGINE_WASM: &[u8] =
     include_bytes!("../../engine/target/wasm32-unknown-unknown/release/audiolab_engine.wasm");
+
+/// What ships, and what it is.
+const MANIFEST: &str = include_str!("../../sounds/manifest.json");
 const TV_SNIPS: &[u8] = include_bytes!("../../sounds/tv-snips.opus");
 
 /// What a path is served as. Kept explicit rather than guessed from an
@@ -49,12 +81,29 @@ fn handle(req: Request) -> anyhow::Result<impl IntoResponse> {
     // build will ever need.
     let (body, kind) = match path {
         "/" | "/index.html" => (INDEX.as_bytes(), mime("html")),
-        "/engine.js" => (ENGINE_JS.as_bytes(), mime("js")),
         "/app.js" => (APP_JS.as_bytes(), mime("js")),
-        "/room.js" => (ROOM_JS.as_bytes(), mime("js")),
-        "/vis-gl.js" => (VIS_GL_JS.as_bytes(), mime("js")),
+        "/app.css" => (APP_CSS.as_bytes(), mime("css")),
+        "/theme-palettes.js" => (THEME_PALETTES.as_bytes(), mime("js")),
+        "/theme-derive.js" => (THEME_DERIVE.as_bytes(), mime("js")),
+        "/grain-shapes.js" => (GRAIN_SHAPES.as_bytes(), mime("js")),
+        "/room-paint.js" => (ROOM_PAINT.as_bytes(), mime("js")),
+        "/ridge-data.js" => (RIDGE_DATA.as_bytes(), mime("js")),
+        "/vis-registry.js" => (VIS_REGISTRY.as_bytes(), mime("js")),
+        "/room3d.js" => (ROOM3D.as_bytes(), mime("js")),
+        "/stage.js" => (STAGE.as_bytes(), mime("js")),
+        "/ridge.js" => (RIDGE.as_bytes(), mime("js")),
+        "/room-text.js" => (ROOM_TEXT.as_bytes(), mime("js")),
+        "/mp4.js" => (MP4.as_bytes(), mime("js")),
+        "/vis-gl.js" => (VIS_GL.as_bytes(), mime("js")),
+        "/video-export.js" => (VIDEO_EXPORT.as_bytes(), mime("js")),
+
+        "/local-server.js" => (LOCAL_SERVER.as_bytes(), mime("js")),
+        "/engine.js" => (ENGINE_JS.as_bytes(), mime("js")),
         "/engine.wasm" => (ENGINE_WASM, mime("wasm")),
-        "/tv-snips.opus" => (TV_SNIPS, mime("opus")),
+
+        "/sounds/manifest.json" => (MANIFEST.as_bytes(), mime("json")),
+        "/sounds/tv-snips.opus" => (TV_SNIPS, mime("opus")),
+
         _ => {
             return Ok(Response::builder()
                 .status(404)

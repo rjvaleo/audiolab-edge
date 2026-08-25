@@ -1078,6 +1078,9 @@
 <script src="/mp4.js"></script>
 <script src="/vis-gl.js"></script>
 <script src="/video-export.js"></script>
+<!-- The server, in the page. The one line added to this file: it must load
+     before app.js, which calls fetch() on the way up. See ui/local-server.js. -->
+<script src="/local-server.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>
