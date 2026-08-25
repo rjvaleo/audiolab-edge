@@ -1,18 +1,24 @@
 // The server, in the page.
 //
-// **`ui/port/app.js` is byte-for-byte the desktop build's.** It has to stay
-// that way — the moment it is edited there are two granular interfaces and one
-// of them is worse. So this does not touch it. It replaces what is *under* it.
+// **`ui/port/app.js` is the desktop build's file, and this does not touch it.**
+// It replaces what is *under* it. That was once literally true — the file was
+// byte-for-byte identical — and it is now 206 lines divergent, all of it the
+// rail rebuild and the removal of tagging, neither of which this file is
+// involved in. The rule that survives is the one in `docs/EDGE-PARITY.md`: the
+// engine and the file formats stay level with the desktop, the interface is
+// ours.
 //
-// The whole interface talks to the server through one function: seventy-six
-// calls through `api()` and `postJSON()`, and the only raw `fetch(` in fifteen
-// thousand lines is the one inside `api()`. That call goes to the global
-// `fetch`, so swapping the global swaps the server, and every line above it
-// carries on believing there is one.
+// The whole interface talks to the server through one function: seventy-five
+// calls through `api()` and `postJSON()`, reaching forty-eight distinct routes,
+// and the only raw `fetch(` in fifteen thousand lines is the one inside
+// `api()`. That call goes to the global `fetch`, so swapping the global swaps
+// the server, and every line above it carries on believing there is one.
 //
 // What answers those calls now is the same engine — `fx`, `edit` and
 // `audio-core` compiled to WebAssembly — plus the sounds compiled into the
-// component. See `docs/PORT.md` for which of the forty-three routes travel.
+// component. Twenty-two of the forty-eight are answered here; `node
+// tools/port-status.mjs` lists the rest, and `docs/PORT.md` says which are
+// meant to travel at all.
 
 (() => {
   const realFetch = window.fetch.bind(window);

@@ -1,65 +1,174 @@
 # audiolab-edge
 
-Granular audio, at the edge. One page: it plays a short sound, mangles it with
-the granular engine from [audiolab](https://github.com/rjvaleo/__Audio-Edit---Tag),
-and draws one big thing while it does.
+**Granular audio synthesis running on Akamai's edge network.** One page: it
+plays a short sound, mangles it with a real granular engine compiled to
+WebAssembly, and draws one big thing while it does.
 
-A **Spin** component, deployed to **Akamai Functions**. See
-[`docs/PLAN.md`](docs/PLAN.md) for what is being built and why.
+[![Akamai Functions](https://img.shields.io/badge/deploys%20to-Akamai%20Functions-FF6600?style=flat-square)](https://techdocs.akamai.com/)
+[![Spin](https://img.shields.io/badge/Spin-4.0.2-04B4C7?style=flat-square)](https://spinframework.dev)
+[![wasm32-wasip2](https://img.shields.io/badge/wasm32--wasip2-component%20model-654FF0?style=flat-square&logo=webassembly&logoColor=white)](https://component-model.bytecodealliance.org/)
+[![Rust](https://img.shields.io/badge/Rust-2021-000000?style=flat-square&logo=rust)](https://www.rust-lang.org/)
+[![component](https://img.shields.io/badge/component-1.99%20MB-blue?style=flat-square)](#what-it-weighs)
+[![engine tests](https://img.shields.io/badge/engine%20tests-624%20passing-success?style=flat-square)](#tests)
 
-## The shape of it
+The engine is the one from
+[**audiolab**](https://github.com/rjvaleo/__Audio-Edit---Tag) — a desktop audio
+editor — vendored here byte for byte rather than reimplemented. Same DSP, same
+file formats, different host.
 
-**The component serves. The browser computes.**
+> **Status: a working proof, not a product.** It runs locally and builds from a
+> bare clone. It has never been deployed to Akamai. See
+> [what works and what doesn't](#what-works-and-what-doesnt).
 
-There is no sound card on an edge node, so the audio plays in the browser — and
-once it does, the server has nothing left to hold. No engine, no session, no
-document, and no meter poll. An `AnalyserNode` reads the sound that is already
-playing.
+---
 
-Everything is compiled into the component with `include_str!` and
-`include_bytes!`. No static-file serving in front of it, no WASI filesystem.
+## Why the edge, and why this is hard
 
-## Building and running
+An edge node has **no sound card**. The desktop build owns an audio device
+directly and streams from a real-time callback; none of that survives the trip.
 
-    brew install spinframework/tap/spin      # 4.0.2
-    rustup target add wasm32-wasip1
-    spin build
-    spin up --listen 127.0.0.1:3009
+The port answers it by moving the line: **the component serves, the browser
+computes.**
 
-`spin build` shells out to `cargo build --release --target wasm32-wasip1`, so
-cargo alone compiles it if the CLI is not to hand. The CLI is what *runs* it,
+```
+   Akamai Functions                            the visitor's browser
+   ┌────────────────────────┐                  ┌──────────────────────────┐
+   │  audiolab_edge.wasm    │   one GET each   │  index.html · app.js     │
+   │  wasm32-wasip2         │ ───────────────► │  local-server.js         │
+   │                        │                  │      ↓ swaps window.fetch│
+   │  every asset inlined   │                  │  engine.wasm  ◄──────────┼── the granular
+   │  include_bytes!        │                  │  wasm32-unknown-unknown  │   engine, in
+   │                        │                  │      ↓                   │   the page
+   │  stateless             │                  │  Web Audio · WebGL       │
+   └────────────────────────┘                  └──────────────────────────┘
+```
+
+Once the audio plays in the browser, the server has nothing left to hold — no
+engine, no session, no document, no meter poll. **The component is stateless**,
+which is exactly what an edge runtime wants.
+
+### The seam that made a whole-app port possible
+
+The desktop interface is 15,143 lines and talks to its server through **one
+function**. Seventy-five calls go through `api()`/`postJSON()`, reaching 48
+distinct routes, and the only raw `fetch(` in the entire file is the one inside
+`api()`.
+
+So [`ui/local-server.js`](ui/local-server.js) replaces the global `fetch` and
+every line above it carries on believing there is a server. That is the whole
+trick, and it is why this is a port rather than a rewrite.
+
+---
+
+## Build and run
+
+```bash
+brew install spinframework/tap/spin      # 4.0.2
+rustup target add wasm32-wasip2 wasm32-unknown-unknown
+spin build
+spin up --listen 127.0.0.1:3009
+```
+
+> Homebrew's plain `spin` is a different program — the SPIN model checker. The
+> tap above is the right one; `fermyon/tap` is the old home and no longer
+> carries it.
+
+**Two targets, because there are two WebAssembly builds here and they are not
+the same kind:**
+
+| | target | why |
+|---|---|---|
+| the engine | `wasm32-unknown-unknown` | runs in the browser, reaches the page over a C ABI |
+| the component | `wasm32-wasip2` | runs on Spin — a **component**, not a core module, which is what Akamai Functions requires |
+
+`spin build` runs both, in that order, because the component embeds the engine's
+`.wasm` and would otherwise embed the previous one:
+
+```bash
+cargo build --release --manifest-path ../engine/Cargo.toml --target wasm32-unknown-unknown
+cargo build --release --target wasm32-wasip2
+```
+
+So cargo alone compiles it if the CLI is not to hand. The CLI is what *runs* it,
 and running it is the only way to know it serves rather than merely links.
 
-Verified 25 Aug 2026:
+`?silent` renders, meters and draws without connecting to the speakers — a
+picture should not need a sound card to be looked at.
 
-    GET /       200  text/html; charset=utf-8   the embedded page
-    GET /nope   404  no such file in this build
+### Tests
 
-Note that Homebrew's plain `spin` is a different program — the SPIN model
-checker. The tap above is the right one; `fermyon/tap` is the old home and no
-longer carries it.
+```bash
+cd engine && cargo test --release
+```
 
-## Where it is up to
+**624 tests across 28 binaries**, the vendored engine crates' own — the DSP,
+the edit list, the grain envelope, all five stretchers, the rack. They came
+across with the source, at no cost.
 
-**Step 3 of 6.** The granular
-engine runs in the browser, on a sound compiled into the component, and it is
-not close:
+Nothing yet tests *the port itself* — the fetch shim, the component, or whether
+the sound manifest and the routes agree. That gap is real and named below.
 
-    tv snips · 6.38s · 48 kHz mono, as 44 KB of Opus
-    259 ms to render 51.0s of stereo cloud
-    197x faster than real time
+---
 
-Native, the same render is 179 ms — so **WebAssembly costs about 1.5x**, with no
-SIMD and nothing tuned. There is no argument for rendering on the server.
+## Deploying to Akamai Functions
+
+**Not yet attempted.** Recorded here because the mechanism is settled and the
+steps are short.
+
+```bash
+# 1. declare the target in spin.toml
+#    [application]
+#    targets = ["akamai-functions"]
+
+spin targets update            # clone the environment catalogue into the OS cache
+spin plugins install aka       # already present here: aka 0.7.5
+spin aka deploy --no-confirm --create-name audiolab-edge
+```
+
+The app comes up on `https://<uuid>.fwf.app` as a wildcard route.
+`--create-name` is accepted **only on the first deploy** — after that the plugin
+writes `.spin-aka/config.toml` into the project and the workspace is linked, so
+later deploys are just `spin aka deploy --no-confirm`.
+
+**What the platform gives us**, read out of the WIT world
+(`ghcr.io/fermyon/akamai-functions/wit:1.1.0`):
+
+- It is a **component platform**, expressed purely as WIT worlds — a core module
+  will not do.
+- Key-value, variables, and `local_service_chaining` (components can call each
+  other internally) are available. None are used here yet.
+- It accepts **both wasip2 and wasip3**. We are on wasip2 because *Rust cannot
+  emit wasip3* — the target does not exist on stable or nightly. The constraint
+  is the toolchain, not Akamai.
+
+**Two known gaps before a deploy would be trustworthy:**
+
+1. `spin.toml` has no `targets` key yet, and `spin targets update` has never run
+   on the build machine.
+2. **A WASI version skew nobody has validated.** The component imports both
+   `@0.2.0` (from spin-sdk 3.1.1) and `@0.2.9` (from Rust's wasip2 std), while
+   Akamai's world provides `@0.2.6` and `@0.3.0`. Installing `wasm-tools` and
+   running world-conformance validation is the cheap next step. Akamai's own
+   Rust template pins **spin-sdk 6**; this repo is on 3.1.1.
+
+---
+
+## What works, and what doesn't
+
+**Working:** the granular engine end to end, transport with looping, the
+waveform, the spectrogram, the meters, the Room and the Ridgeline visuals, the
+effect rack (EQ, compressor, shapers, maximiser), the theme editor, and the
+four-button rail.
+
+**Not working, honestly:**
 
 | | |
 |---|---|
-| 1 | **the repository** — `spin.toml`, a page, and a component that serves it ✅ |
-| 2 | **the engine in the browser, playing a shipped sound** ✅ |
-| 3 | **the Room, drawn from an `AnalyserNode`** ✅ |
-| 4 | Ridgeline, the theme, the controls |
-| 5 | the rest of the sounds |
-| 6 | deploy |
+| **12 visuals are dead** | `/vendor/babylon.js` was never copied from the desktop. Kills Surfaces, Stage and the ten grain arrangements. It is a **decision, not an oversight** — babylon is 7.9 MB against a 1.99 MB component. |
+| **26 of 48 routes unanswered** | Presets, export, video, stats, measure. `node tools/port-status.mjs` prints the list. Roughly half the remainder — scan, library, tagging, recording — are features that legitimately do not travel. |
+| **the toolbar is mostly inert** | `doc_apply` implements one operation, `stretch`. Cut, crop, fade, reverse, undo and export all answer 501. |
+| **the stretch tray opens on WSOLA** | while `render()` unconditionally calls `granular` and ignores `stretch.algorithm`. |
+| **nothing is compressed** | see below. |
 
 ### Not an AudioWorklet, and that turned out to be right
 
@@ -69,63 +178,119 @@ then played and looped. A quarter of a second of work for fifty seconds of
 sound, once — against a worklet's obligation to keep up 128 samples at a time,
 for ever.
 
-A worklet becomes worth having when a control has to move *while* it plays.
-Until then this is simpler, and it is what makes the page start playing on its
-own.
+The consequence, which is visible in the interface: a control **drag** moves the
+number and **release** moves the sound. A worklet becomes worth having when a
+control has to move *while* it plays.
+
+**The page does not play on its own.** `first-sound.js` opens a sound so the
+waveform, the spectrogram and the controls have something to show on arrival,
+and stops there. Landing on the URL gives you a loaded document and a silent
+one; play is a press.
+
+### Speed
+
+```
+tv snips · 6.38s · 48 kHz mono, as 44 KB of Opus
+259 ms to render 51.0s of stereo cloud
+197x faster than real time
+```
+
+Native, the same render is 179 ms — so **WebAssembly costs about 1.5×**, with no
+SIMD and nothing tuned. There is no argument for rendering on the server.
+
+---
 
 ## What it weighs
 
-An empty component — the page, the routing and the Spin runtime — is **211 KB**.
-With the engine and one sound compiled into it, **315 KB**. The budget:
+Measured 25 Aug 2026 with `stat`, on the build in this repository.
 
-| | raw |
+| | bytes |
 |---|---|
-| the component, with the engine, the Room and one sound inside it | 428 KB |
-| — of which the granular engine | 54 KB |
-| Room + Ridgeline | 269 KB |
-| interface, before trimming | 848 KB |
-| twenty sounds, Opus 96k | ~1,480 KB |
+| **the component, deployable** | **2,085,236** |
+| — the granular engine, `wasm32-unknown-unknown` | 348,862 |
+| — `app.js` | 644,901 |
+| — `app.css` | 167,136 |
+| — `index.html` | 56,685 |
+| — one sound, Opus 96k | 45,262 |
 
-Under 2 MB, sounds and all.
+**Nothing is compressed.** The component sets no `content-encoding`, so a cold
+visit transfers about 1.8 MB. `gzip -9` on the three text assets alone takes
+868,722 → 256,915 — a 3.4:1 saving nobody is taking. Spin's own
+`spin-fileserver` component has brotli and gzip compiled in; embedding the
+assets in our own component is precisely what costs us this, and revisiting that
+trade is open.
 
-## The other repository
+---
 
-[**rjvaleo/__Audio-Edit---Tag**](https://github.com/rjvaleo/__Audio-Edit---Tag) —
-the desktop build, and it **does not change** for this. Ten crates, ~53,700
-lines of Rust, 1,033 Rust tests and 223 browser tests.
+## Sounds
 
-This repository was seeded by copying rather than by forking history: nothing
-here shares a commit with it, and the audio in its history should not follow it
-anywhere — which is also why it is not a submodule. Pulling the desktop tree in
-that way costs a **407 MB fetch and a 1,028 MB checkout** to obtain 1.2 MB of
-source, and none of the gigabyte is anything this build can use.
+One so far — `tv-snips.opus`, 6.38 s, Opus 96k, 45,262 bytes. More are coming.
 
-So the engine is **vendored**. `engine/vendor/` holds `audio-core`, `fx`, `edit`
-and the four wire-format files, copied byte for byte from a named commit of that
-repository. That is what makes "the same engine, not a reimplementation"
-literally true, and it is why a bare `git clone` of this repository builds on a
-machine that has never seen the desktop tree.
+Everything under `sounds/` is compiled into the component, and
+`sounds/manifest.json` is what the interface reads as its file list. To add one:
 
-**The copy is meant to stay level with the desktop, and the feature set is
-not.** Those are two different rules and the split is deliberate:
+```bash
+cp yoursound.wav sounds/
+node tools/manifest.mjs      # re-probes with ffprobe, rewrites manifest.json
+spin build
+```
+
+Opus at 96k is the format because it is small and the browser decodes it
+natively — writing a decoder in Rust to avoid `decodeAudioData` would be a
+decoder to maintain. Nineteen more at ~45 KB would add roughly 860 KB to the
+component, taking it to just under 3 MB.
+
+---
+
+## The engine is vendored, not linked
+
+[`engine/vendor/`](engine/vendor/) holds `audio-core`, `fx`, `edit` and four
+wire-format files, copied **byte for byte** from a named commit of the desktop
+repository. [`engine/vendor/SOURCE.md`](engine/vendor/SOURCE.md) records which
+commit.
+
+Until 25 Aug these were absolute paths into a home directory, which meant the
+repository built on exactly one machine in the world. A submodule was the
+obvious fix and the wrong one: the desktop repository is a **407 MB fetch and a
+1,028 MB checkout**, because a large audio library is tracked at HEAD. That is a
+gigabyte of someone's personal audio to obtain 1.2 MB of source.
+
+**The rule between the two builds**, which is deliberate and not a compromise:
 
 - **the engine and the file formats — identical.** A preset, a session, a rack
   spec or an exported AIFF written by either build opens in the other. That is
   the contract, and it is why these seven things are copied rather than
   reimplemented.
 - **the features — this build is a subset.** No disk, no device, no library, no
-  tags. It lags the desktop and that is normal, not a fault.
+  tags. It lags the desktop, and that is normal.
 
-Bringing the engine up to date is one command:
+```bash
+tools/sync-core.sh            # re-copy from a desktop checkout, rewrite the provenance
+tools/sync-core.sh --check    # or just ask whether anything has moved
+node tools/port-status.mjs    # which /api routes the interface calls but this build doesn't answer
+```
 
-    tools/sync-core.sh            # re-copy, and rewrite the provenance note
-    tools/sync-core.sh --check    # or just ask whether anything has moved
+Both find the desktop tree at `$AUDIOLAB_CORE` or beside this one at
+`../__Audio-Edit---Tag/core`, and both pass quietly where there is neither —
+which is the normal case for anyone but the author.
 
-`engine/vendor/SOURCE.md` records which commit this copy came from. Both find
-the desktop tree at `$AUDIOLAB_CORE` or beside this one at
-`../__Audio-Edit---Tag/core`, and both pass quietly where there is neither.
+The full method is written up in the desktop repository as `docs/EDGE-PARITY.md`.
 
-The routes are the part that does not arrive by itself — `node
-tools/port-status.mjs` lists every `/api/*` the interface calls that this build
-does not answer. The method is written up in the desktop repo, in
-`docs/EDGE-PARITY.md`.
+---
+
+## The other repository
+
+[**rjvaleo/__Audio-Edit---Tag**](https://github.com/rjvaleo/__Audio-Edit---Tag)
+— the desktop build, and it **does not change** for this. Ten crates, ~53,700
+lines of Rust, 1,033 Rust tests and 222 browser tests.
+
+This repository was seeded by copying rather than by forking history: nothing
+here shares a commit with it.
+
+## Documents
+
+| | |
+|---|---|
+| [`docs/PLAN.md`](docs/PLAN.md) | what was decided before any of it existed, and why |
+| [`docs/PORT.md`](docs/PORT.md) | route by route: what travels, what does not, what is stubbed |
+| [`docs/RAIL.md`](docs/RAIL.md) | the four-button rail, and the first deliberate divergence from the desktop interface |

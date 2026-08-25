@@ -15,8 +15,11 @@
 // three selectors, so the buttons have to exist before it runs.
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// **`app.js` is not modified, and must not be.** It reaches into the rail in
-// exactly three ways, and this file emits markup that answers all three:
+// **This file does not modify `app.js`.** It reaches into the rail in exactly
+// three ways, and this file emits markup that answers all three — which is what
+// lets the rail be replaced without touching the interface that drives it.
+// (`app.js` itself has since been edited for other reasons, 206 lines of rail
+// wiring and tag removal; the point here is that *this* file needs none of it.)
 //
 //   `#leftRail .mode-btn` + `dataset.mode`    `setMode` toggles `.active`
 //   `#leftRail .rail-btn` + `dataset.panel`   `showPane` toggles `.active`,

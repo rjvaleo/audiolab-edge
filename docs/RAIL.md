@@ -1,6 +1,8 @@
 # The left rail
 
-Written 25 Aug 2026. **A plan. None of this is built.**
+Written 25 Aug 2026 as a plan. **It is built** — `ui/port/rail.js` and
+`rail.css` are the four buttons described below, and they are what the page
+shows. Kept as the record of the argument, not as a to-do list.
 
 ## What is wrong with it
 

@@ -13,9 +13,16 @@ use spin_sdk::http_component;
 
 // ── the interface ──
 //
-// `ui/port/` is the desktop build's interface, copied across whole and not
-// edited: `app.js` is byte-for-byte the same file. What replaced the server is
-// `local-server.js`, which swaps the global `fetch`. See `docs/PORT.md`.
+// `ui/port/` is the desktop build's interface, copied across whole. What
+// replaced the server is `local-server.js`, which swaps the global `fetch`.
+// See `docs/PORT.md`.
+//
+// It began byte-for-byte identical and no longer is: `app.js` differs by 206
+// lines and `index.html` by 106, almost all of it the rail rebuild and the
+// removal of tagging. `app.css` is still identical. The divergence is
+// deliberate and its boundary is written down — `docs/EDGE-PARITY.md` in the
+// desktop repository: the engine and the file formats stay level, the interface
+// is ours.
 //
 // Listed one by one rather than walked, because a component cannot walk a
 // directory it does not have — and because being able to read what ships is

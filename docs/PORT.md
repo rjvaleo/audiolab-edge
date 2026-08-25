@@ -54,7 +54,7 @@ interface.
 | `/api/audio/buffer` | the decoded buffer itself |
 | `/api/engine/state` | what Web Audio reports |
 | `/api/engine/transport` | play and stop on a `BufferSource` |
-| `/api/engine/master` | the `AnalyserNode` that already feeds the Room |
+| `/api/engine/master` | the meter window that already feeds the Room |
 | `/api/measure` | `audio_core` through the wasm engine |
 | `/api/state` | a constant: one sound, no library |
 
@@ -64,7 +64,7 @@ interface.
 |---|---|
 | the library | `/api/library`, `/api/folders`, `/api/files`, `/api/browse`, `/api/scan`, `/api/scan/stop`, `/api/thumbs`, `/api/stats`, `/api/similar`, `/api/order` |
 | tagging | `/api/labels`, `/api/usertags`, `/api/annot` |
-| writing files | `/api/export`, `/api/export/stop`, `/api/save`, `/api/record`, `/api/capture` |
+| writing files | `/api/export`, `/api/export/stop`, `/api/record`, `/api/capture` (`/api/save` was listed here and has no caller in `app.js`) |
 | video | `/api/video/stop` |
 | the rest | `/api/markers`, `/api/automation`, `/api/automation/record`, `/api/scales`, `/api/presets` and its four, `/api/rack`, `/api/rack/param`, `/api/fx`, `/api/engine/shed`, `/api/engine/load/reset` |
 

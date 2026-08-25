@@ -1,6 +1,18 @@
 # A build for the edge
 
-Written 25 Aug 2026. **A plan, not a description — none of this exists yet.**
+Written 25 Aug 2026 as a plan, before any of it existed. **Most of it is built
+now** — the component, the engine in the browser, the transport, the Room, the
+Ridgeline and the rail all run. Kept as the record of what was decided and why,
+not as a description of the current build; `README.md` has the status table and
+`PORT.md` has the route-by-route state.
+
+**One decision in here was reversed and the earlier text still says the old
+thing.** Everything below line 33 that says `wasm32-wasip1` predates the choice;
+it is **wasip2**, settled 25 Aug and recorded as such under *Open questions*. The
+build is a component (`\0asm 0d00 0100`), not a core module, because that is what
+Akamai Functions requires. Left rather than rewritten, because a plan that
+silently agrees with the outcome is no longer evidence of how the outcome was
+reached.
 
 ## What it is
 
@@ -31,7 +43,8 @@ request.
 
 That matters more than the sound card ever did, and it retires the assumption
 this work started from. `--no-default-features` was the right fix for
-`libasound.so.2` (`EDGE-BUILD.md`) and it is still necessary. It is nowhere near
+`libasound.so.2` (`docs/EDGE-BUILD.md` **in the desktop repository**, not this
+one) and it is still necessary. It is nowhere near
 sufficient.
 
 ## What was measured
@@ -77,12 +90,13 @@ The move that dissolves the problem is not a build flag. It is this:
 Today the server owns the audio device, which is why the interface has to ask it
 what the sound looks like twenty times a second — `/api/engine/master`, the
 route that `mbTick` exists to poll and the one that hung on CI
-(`NO-AUDIO-DEVICE.md`). Move playback into Web Audio and that entire axis is
+(`docs/NO-AUDIO-DEVICE.md`, also in the desktop repository). Move playback into
+Web Audio and that entire axis is
 gone:
 
 - no engine, no cpal, no real-time thread, no `try_lock` discipline
 - **no `/api/engine/*` at all**, so no polling and no meter round trip
-- an `AnalyserNode` gives the visual its numbers from the sound already playing,
+- the meter gives the visual its numbers from the sound already playing,
   on the same machine, with no network in the loop — which is *better* than what
   the desktop build does, not a concession
 
@@ -97,7 +111,7 @@ document, no session. Whether it needs to do *any* computation depends on the
 last open question below.
 
 **The browser** runs `audio-core` + `fx` + `edit` as WASM in an AudioWorklet,
-plays the result through Web Audio, and draws the visual from an `AnalyserNode`.
+plays the result through Web Audio, and draws the visual from the meter.
 
 ## What crosses over
 
