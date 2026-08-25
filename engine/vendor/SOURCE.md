@@ -1,8 +1,10 @@
 # Where this came from
 
-Everything under `engine/vendor/` is copied, byte for byte, out of the
-desktop build. Nothing here is written for the edge; nothing here should be
-edited here. Change it in the desktop tree and run `tools/sync-core.sh`.
+Everything under `engine/vendor/` was copied, byte for byte, out of the
+desktop build at the commit below. It is this build's source now and is free
+to diverge — this repository is a proof that the engine runs at the edge, not
+a second distribution of it. Re-copy with `tools/sync-core.sh` if you ever
+want the desktop's current code; there is no obligation to.
 
 | | |
 |---|---|

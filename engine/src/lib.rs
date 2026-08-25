@@ -36,12 +36,11 @@ use std::cell::RefCell;
 // reach for `edit`, `fx`, `json` and std; not one of them mentions yamnet,
 // search, catalog or indexer — checked, not assumed.
 //
-// **These are copies, and a copy can drift.** That is the price of a repository
-// that builds on a machine that has never seen the desktop tree — which it now
-// does, and did not before. `tools/sync-core.sh --check` diffs every vendored
-// file against a desktop checkout and fails loudly if one has moved; run it
-// after changing anything in `core/crates/{audio-core,fx,edit}` or in the four
-// files below. `vendor/SOURCE.md` records the commit this copy was taken from.
+// **These are copies, and they are allowed to diverge.** This repository is a
+// proof that the engine runs at the edge, not a second distribution of it — so
+// the copy under `vendor/` is simply this build's source now, and the desktop
+// owes it nothing. `tools/sync-core.sh` re-copies if that is ever wanted;
+// `vendor/SOURCE.md` records the commit this one came from.
 #[path = "../vendor/wire/json.rs"]
 mod json;
 #[path = "../vendor/wire/rack.rs"]

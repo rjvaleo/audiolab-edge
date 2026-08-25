@@ -12,15 +12,11 @@
 # ~/Documents/__Audio-Edit---Tag, which meant this repository built on exactly
 # one machine in the world. They are copied in now, so a bare `git clone` builds.
 #
-# The price of a copy is that it can drift, and drift in *this* copy is
-# particularly nasty: the vendored code is what computes every answer the
-# interface receives, so a stale copy does not fail to build, it quietly gives
-# different sound. There is no way to make that impossible. This makes it
-# one command to detect.
-#
-# Run --check after touching anything in core/crates/{audio-core,fx,edit} or in
-# the four wire-format files. It is also what CI runs, on the machine that has
-# both trees.
+# The copy is allowed to diverge from the desktop, and this script is not a
+# chore anybody has to remember. It exists for the one case where you *do* want
+# the current desktop code — run it, and the copy is refreshed and the
+# provenance note rewritten. --check answers the same question without moving
+# anything.
 #
 # ── where the desktop tree is looked for ─────────────────────────────────────
 #
@@ -101,9 +97,11 @@ DIRTY="$(git -C "$REPO" status --porcelain \
 {
   echo "# Where this came from"
   echo
-  echo "Everything under \`engine/vendor/\` is copied, byte for byte, out of the"
-  echo "desktop build. Nothing here is written for the edge; nothing here should be"
-  echo "edited here. Change it in the desktop tree and run \`tools/sync-core.sh\`."
+  echo "Everything under \`engine/vendor/\` was copied, byte for byte, out of the"
+  echo "desktop build at the commit below. It is this build's source now and is free"
+  echo "to diverge — this repository is a proof that the engine runs at the edge, not"
+  echo "a second distribution of it. Re-copy with \`tools/sync-core.sh\` if you ever"
+  echo "want the desktop's current code; there is no obligation to."
   echo
   echo "| | |"
   echo "|---|---|"

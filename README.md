@@ -106,12 +106,16 @@ repository. That is what makes "the same engine, not a reimplementation"
 literally true, and it is why a bare `git clone` of this repository builds on a
 machine that has never seen the desktop tree.
 
-The price of a copy is that it can drift, so drift is one command away:
+**This copy is allowed to drift, and probably will.** That is a decision, not an
+oversight: this repository is a proof that the engine runs at the edge, not a
+second distribution of it. The desktop build carries on doing what it does and
+owes this nothing; nothing here has to be kept level with it.
 
-    tools/sync-core.sh --check    # has the copy moved? exit 1 if so
-    tools/sync-core.sh            # bring it up to date, rewrite the provenance
+If you ever do want the current desktop code, that is one command:
 
-`engine/vendor/SOURCE.md` records which commit the copy was taken from. Both
-commands find the desktop tree at `$AUDIOLAB_CORE`, or beside this one at
-`../__Audio-Edit---Tag/core`; with neither present `--check` says so and passes,
-because there is nothing to compare against.
+    tools/sync-core.sh            # re-copy, and rewrite the provenance note
+    tools/sync-core.sh --check    # or just ask whether anything has moved
+
+`engine/vendor/SOURCE.md` records which commit this copy came from. Both find
+the desktop tree at `$AUDIOLAB_CORE` or beside this one at
+`../__Audio-Edit---Tag/core`, and both are entirely optional.
