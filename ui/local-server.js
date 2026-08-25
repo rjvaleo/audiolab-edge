@@ -422,6 +422,48 @@
           lanes: [], sampleRate: audio.rate, stale: false, targets: [],
         });
 
+      // ── the poll that drives the playhead ──
+      //
+      // **Not `/api/engine/state`.** That one is asked once, on arrival. This
+      // is the one asked twenty times a second while a sound plays, and the
+      // playhead is drawn from it: `lockClock` takes `position`, and
+      // `enginePosition` carries it forward on the wall clock in between.
+      //
+      // Without it the clock was never anchored and never wrapped, so the
+      // playhead ran forward for ever and vanished the moment it passed the end
+      // of the view — one pass, then gone, while the sound went round happily.
+      //
+      // `loop` is the important field and the desktop says why: *"Only it knows
+      // what a loop end of zero resolves to, so anything drawing a playhead is
+      // told rather than left to work it out and be wrong."* Zero to zero means
+      // the whole document; here that is the whole rendered cloud, and this is
+      // the only place that knows how long that came out.
+      case '/api/engine/grains': {
+        return json({
+          position: Math.round(position()),
+          sampleRate: audio.rate,
+          playing: !!play.node,
+          // No device latency to report. The desktop measures the gap between
+          // what the callback has written and what the card has played; a
+          // `BufferSource` starts when it is told and `currentTime` already
+          // accounts for the output.
+          latency: 0,
+          // The grains that *fired* since the last poll. The desktop drains
+          // them from the audio thread as it renders; nothing renders
+          // incrementally here — the cloud is made whole before it plays — so
+          // there is no stream of events to drain. The visuals that want them
+          // read the schedule from `/api/grains` instead, which is the same
+          // enumeration.
+          grains: [],
+          spectrum: [],
+          waveform: [],
+          load: { now: 0, mean: 0, worst: 0 },
+          ...(play.looping && play.frames
+            ? { loop: { a: 0, b: play.frames } }
+            : {}),
+        });
+      }
+
       case '/api/grains': {
         const path = url.searchParams.get('p');
         if (path) await open(path);
