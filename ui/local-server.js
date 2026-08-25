@@ -44,6 +44,90 @@
 
   const FOLDER = 'Sounds';
 
+  // ── the engine ──
+  //
+  // The same `fx`, `edit` and `audio-core` the desktop links, plus the four
+  // wire-format files it answers `/api/edit` with. It holds the document; this
+  // file only carries messages to it.
+  const wasm = {
+    ex: null,
+    /// Re-read after every call. A render allocates, allocation can grow the
+    /// memory, and growing it detaches every existing view — one taken before a
+    /// call and used after it reads as zeros, with no warning.
+    f32: () => new Float32Array(wasm.ex.memory.buffer),
+    u8: () => new Uint8Array(wasm.ex.memory.buffer),
+    /// Whatever the last call left behind, as parsed JSON.
+    said: (n) => {
+      const at = wasm.ex.text_ptr();
+      return JSON.parse(new TextDecoder().decode(wasm.u8().slice(at, at + n)));
+    },
+  };
+
+  let engineReady = null;
+  function engine() {
+    if (!engineReady) {
+      engineReady = WebAssembly.instantiateStreaming(realFetch('/engine.wasm'), {})
+        .then(({ instance }) => { wasm.ex = instance.exports; return wasm; });
+    }
+    return engineReady;
+  }
+
+  // ── the sound ──
+  //
+  // One at a time, which is as true on the desktop as it is here. Decoded by
+  // the browser rather than by us: `decodeAudioData` reads Opus, and writing a
+  // decoder in Rust to avoid it would be a decoder to maintain.
+  const audio = { ctx: null, path: null, buffer: null, channels: 2, rate: 48000 };
+
+  function context() {
+    if (!audio.ctx) {
+      audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    return audio.ctx;
+  }
+
+  /// Interleave the way the engine expects, and give a mono file two channels.
+  ///
+  /// **Stereo even from a mono source**, because `pan_spread` places grains
+  /// across the stereo field and has nowhere to place them in one channel. Most
+  /// of the library is mono, so this is the normal case rather than an edge one.
+  function interleaved(buf) {
+    const n = buf.length;
+    if (buf.numberOfChannels === 1) {
+      const one = buf.getChannelData(0);
+      const out = new Float32Array(n * 2);
+      for (let i = 0; i < n; i++) { out[i * 2] = one[i]; out[i * 2 + 1] = one[i]; }
+      return out;
+    }
+    const l = buf.getChannelData(0);
+    const r = buf.getChannelData(1);
+    const out = new Float32Array(n * 2);
+    for (let i = 0; i < n; i++) { out[i * 2] = l[i]; out[i * 2 + 1] = r[i]; }
+    return out;
+  }
+
+  /// Open a sound as the document, if it is not open already.
+  async function open(path) {
+    if (audio.path === path) return;
+    const list = await sounds();
+    const it = list.find((f) => f.path === path);
+    if (!it) throw new Error(`no such sound: ${path}`);
+
+    const e = await engine();
+    const bytes = await (await realFetch(`/sounds/${it.name}`)).arrayBuffer();
+    const decoded = await context().decodeAudioData(bytes);
+    const flat = interleaved(decoded);
+
+    const ptr = e.ex.alloc(flat.length);
+    e.f32().set(flat, ptr >>> 2);
+    e.ex.doc_open(ptr, flat.length, 2, decoded.sampleRate);
+
+    audio.path = path;
+    audio.buffer = decoded;
+    audio.channels = 2;
+    audio.rate = decoded.sampleRate;
+  }
+
   async function handle(path) {
     const url = new URL(path, location.origin);
     const p = url.pathname;
@@ -89,15 +173,78 @@
       case '/api/order':
         return json([]);
 
+      // ── the document ──
+
+      case '/api/edit': {
+        const path = url.searchParams.get('p');
+        if (!path) return json({ error: 'no path given' }, 400);
+        await open(path);
+        const e = await engine();
+        return json(e.said(e.ex.doc_json()));
+      }
+
+      case '/api/peaks': {
+        const path = url.searchParams.get('p');
+        if (!path) return json({ error: 'no path given' }, 400);
+        await open(path);
+        const e = await engine();
+        const n = Math.max(1, Math.min(100000, +url.searchParams.get('n') || 2048));
+        return json(e.said(e.ex.peaks_json(n)));
+      }
+
+      // What the desktop reports about the buffer it is filling. There is no
+      // ring here — the sound is rendered whole — so the honest answer is that
+      // it is as full as it gets.
+      case '/api/audio/buffer':
+        return json({ frames: 4096, running: 4096, sampleRate: audio.rate });
+
+      // The ceiling on how many grains will be drawn at once. The desktop makes
+      // this adjustable because a real library has files long enough to matter.
+      case '/api/grains/cap':
+        return json({ cap: 4000 });
+
       default:
         return notPorted(p + url.search);
     }
   }
 
-  window.fetch = (input, init) => {
+  /// The routes that change something. Split out because the desktop splits
+  /// them: `GET /api/edit` reads the document and `POST /api/edit` moves it.
+  async function change(path, init) {
+    const url = new URL(path, location.origin);
+    const p = url.pathname;
+    let body = {};
+    try { body = JSON.parse(init.body); } catch { /* some routes send nothing */ }
+
+    switch (p) {
+      case '/api/edit': {
+        if (body.p) await open(body.p);
+        const e = await engine();
+        const text = new TextEncoder().encode(JSON.stringify(body));
+        const ptr = e.ex.alloc((text.length + 3) >> 2);
+        e.u8().set(text, ptr);
+        return json(e.said(e.ex.doc_apply(ptr, text.length)));
+      }
+
+      default:
+        return notPorted(p);
+    }
+  }
+
+  window.fetch = async (input, init) => {
     const path = typeof input === 'string' ? input : (input && input.url) || '';
-    if (path.startsWith('/api/')) return handle(path, init);
-    return realFetch(input, init);
+    if (!path.startsWith('/api/')) return realFetch(input, init);
+    const method = ((init && init.method) || 'GET').toUpperCase();
+    try {
+      return method === 'GET' ? await handle(path) : await change(path, init || {});
+    } catch (e) {
+      // A thrown error would reject the fetch, and `api()` reads `.error` off a
+      // parsed body — so a failure has to arrive as a response, not as a throw,
+      // or the interface reports "bad response from server" and hides what
+      // actually went wrong.
+      console.error('[local-server]', path, e);
+      return json({ error: String((e && e.message) || e) }, 500);
+    }
   };
 
   console.log('[local-server] the server is in the page now');
