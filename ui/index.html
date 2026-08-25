@@ -1,0 +1,57 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audiolab</title>
+<style>
+  :root {
+    --bg: #07090a;
+    --ink: #e7ebe9;
+    --mute: #6f7b79;
+    --line: #1c2225;
+    --sig: #5fd47a;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.6 ui-monospace, "SF Mono", Menlo, monospace;
+    display: grid;
+    place-items: center;
+    padding: 2rem;
+  }
+  .card {
+    width: min(46rem, 100%);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 2rem clamp(1.2rem, 5vw, 2.4rem);
+  }
+  h1 {
+    font-size: clamp(1.6rem, 5vw, 2.3rem);
+    letter-spacing: -.02em;
+    margin: 0 0 .4rem;
+    font-weight: 600;
+  }
+  .sub { color: var(--mute); margin: 0 0 2rem; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: .5rem 1.4rem; margin: 0; }
+  dt { color: var(--mute); }
+  dd { margin: 0; }
+  .on { color: var(--sig); }
+  footer { margin-top: 2rem; padding-top: 1.2rem; border-top: 1px solid var(--line); color: var(--mute); font-size: 13px; }
+</style>
+<div class="card">
+  <h1>Audiolab</h1>
+  <p class="sub">Granular audio, at the edge.</p>
+  <dl>
+    <dt>component</dt><dd class="on">running</dd>
+    <dt>target</dt><dd>wasm32-wasip1</dd>
+    <dt>assets</dt><dd>compiled in</dd>
+    <dt>state</dt><dd>none</dd>
+    <dt>engine</dt><dd>not yet — step&nbsp;2</dd>
+  </dl>
+  <footer>
+    Nothing here makes a sound yet. This page exists to prove the toolchain
+    end&nbsp;to&nbsp;end before anything real is put in it.
+  </footer>
+</div>

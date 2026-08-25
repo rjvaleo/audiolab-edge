@@ -1,0 +1,22 @@
+spin_manifest_version = 2
+
+[application]
+name = "audiolab-edge"
+version = "0.1.0"
+authors = ["Richard Valeo"]
+description = "Granular audio, at the edge. One page, one sound, one visual."
+
+[[trigger.http]]
+route = "/..."
+component = "audiolab-edge"
+
+[component.audiolab-edge]
+source = "component/target/wasm32-wasip1/release/audiolab_edge.wasm"
+# No `files` key on purpose. Everything is compiled into the component with
+# `include_bytes!` rather than mounted into a WASI filesystem — see
+# `docs/PLAN.md`.
+
+[component.audiolab-edge.build]
+command = "cargo build --release --target wasm32-wasip1"
+workdir = "component"
+watch = ["src/**/*.rs", "../ui/**/*", "Cargo.toml"]
