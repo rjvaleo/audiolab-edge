@@ -497,10 +497,32 @@
         const ptr = e.ex.alloc((text.length + 3) >> 2);
         e.u8().set(text, ptr);
         const out = e.said(e.ex.doc_apply(ptr, text.length));
-        // The document moved, so the cloud in the air is of the old one. Marked
-        // rather than re-rendered: a slider sends one of these per movement and
-        // rendering each would be a quarter of a second of work thrown away.
+
+        // ── the cloud in the air is now of the old document ──
+        //
+        // **On release, not on every movement.** The desktop changes the sound
+        // *while* a control is dragged, because it has a real-time engine and
+        // the grains are being emitted as you move. There is no such engine
+        // here: `granular` takes a whole buffer and gives a whole buffer, so
+        // "change the sound" means "make it again", a quarter of a second at a
+        // time. Doing that at the drag's rate would be work thrown away before
+        // it was heard.
+        //
+        // The panel already says which is which. A drag posts `quality:
+        // "draft"` — the desktop's signal for *this one is provisional* — and
+        // the release posts the real quality. So a drag moves the numbers and
+        // the release moves the sound.
+        //
+        // Marking it stale was all this did before, and the cloud was only ever
+        // made again inside `start()`. So every control worked, the document
+        // changed, and nothing you could hear did — which reads as the controls
+        // doing nothing at all.
         play.dirty = true;
+        if (play.node && body.quality !== 'draft') {
+          // `stop` banks the playhead and `start` resumes from it, so the swap
+          // happens where you were rather than at the beginning.
+          await start();
+        }
         return json(out);
       }
 
