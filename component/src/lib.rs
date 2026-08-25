@@ -32,6 +32,8 @@ const APP_CSS: &str = ui!("app.css");
 /// The rail: its own file, and nothing else depends on it.
 const RAIL_JS: &str = ui!("rail.js");
 const RAIL_CSS: &str = ui!("rail.css");
+/// Opens a sound on arrival. Edge build only.
+const FIRST_SOUND: &str = ui!("first-sound.js");
 const THEME_PALETTES: &str = ui!("theme-palettes.js");
 const THEME_DERIVE: &str = ui!("theme-derive.js");
 const GRAIN_SHAPES: &str = ui!("grain-shapes.js");
@@ -86,6 +88,7 @@ fn handle(req: Request) -> anyhow::Result<impl IntoResponse> {
         "/app.css" => (APP_CSS.as_bytes(), mime("css")),
         "/rail.js" => (RAIL_JS.as_bytes(), mime("js")),
         "/rail.css" => (RAIL_CSS.as_bytes(), mime("css")),
+        "/first-sound.js" => (FIRST_SOUND.as_bytes(), mime("js")),
         "/theme-palettes.js" => (THEME_PALETTES.as_bytes(), mime("js")),
         "/theme-derive.js" => (THEME_DERIVE.as_bytes(), mime("js")),
         "/grain-shapes.js" => (GRAIN_SHAPES.as_bytes(), mime("js")),

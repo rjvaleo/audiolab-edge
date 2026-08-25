@@ -148,22 +148,23 @@ function toast(msg) {
 // ------------------------------------------------------------------- panels
 
 function showPane(side, name) {
-  const panes = side === 'left'
-    ? { browse: 'paneBrowse', search: 'paneSearch', scan: 'paneScan',
-        import: 'paneImport', record: 'paneRecord', theme: 'paneTheme' }
-    : { inspect: 'paneInspect' };
+  // **No right side any more.** Tagging does not travel to the edge build, and
+  // it was the only thing that ever lived over there. A caller asking for it is
+  // asking for a panel that is gone.
+  if (side !== 'left') return;
+  const panes = { browse: 'paneBrowse', search: 'paneSearch', scan: 'paneScan',
+                  import: 'paneImport', record: 'paneRecord', theme: 'paneTheme' };
   for (const [key, id] of Object.entries(panes)) $(id).classList.toggle('hidden', key !== name);
   const titles = { browse: 'Browse', search: 'Search', scan: 'Scan',
-                   import: 'Library', record: 'Record', inspect: 'Tags',
-                   theme: 'Theme' };
+                   import: 'Library', record: 'Record', theme: 'Theme' };
   // Opening the panel starts polling the input; leaving it stops, so nothing
   // is asking a device for levels that nobody is looking at.
   if (side === 'left') recordPanelShown(name === 'record');
-  $(side === 'left' ? 'leftPanelTitle' : 'rightPanelTitle').textContent = titles[name];
+  $('leftPanelTitle').textContent = titles[name];
   $('treeFilter').classList.toggle('hidden', name !== 'browse');
   document.querySelectorAll('#leftRail .rail-btn').forEach((b) =>
     b.classList.toggle('active', b.dataset.panel === name));
-  $(side === 'left' ? 'leftPanel' : 'rightPanel').classList.remove('collapsed');
+  $('leftPanel').classList.remove('collapsed');
 }
 
 document.querySelectorAll('#leftRail .rail-btn').forEach((b) =>
@@ -211,7 +212,7 @@ function closeDrawer() {
 
 $('scrim').onclick = () => closeDrawer();
 $('closeLeft').onclick = () => closeDrawer();
-$('closeRight').onclick = () => $('rightPanel').classList.add('collapsed');
+// (The right panel was the tag panel. It is gone — see `index.html`.)
 
 // ================================================================ the library
 //
@@ -1537,10 +1538,7 @@ document.querySelectorAll('#leftRail .mode-btn').forEach((b) => {
 });
 
 // Panels close with their ×; the rails are how they come back.
-$('tagsToggle').onclick = () => {
-  const closed = $('rightPanel').classList.toggle('collapsed');
-  $('tagsToggle').classList.toggle('active', !closed);
-};
+// (The ✎ toggle opened the tag panel. Both are gone.)
 
 /// Open a sound in the editor as its own document, alongside whatever is
 /// already there. An already-open file is brought forward rather than reloaded.
@@ -9890,6 +9888,16 @@ function specColour(v) {
 /// the folder are not.
 let sonicSeq = 0;
 async function showSonicTags(file) {
+  // **Tagging does not travel to the edge build.** The panel this filled was
+  // removed from `index.html`, and the classifier behind it — `yamnet`, which
+  // is `tract-onnx` — is thirteen megabytes of neural network runtime with
+  // nothing to do here. See `docs/PORT.md`.
+  //
+  // Emptied rather than deleted: the body is what has gone, the name stays so
+  // that its callers do not have to be found and edited one by one. Stripping
+  // the callers is a pass of its own.
+  return;
+
   const box = $('sonicTags');
   if (!box) return;
   const seq = ++sonicSeq;
@@ -9922,6 +9930,16 @@ async function showSonicTags(file) {
 /// it was inferred from. Clicking one accepts it, which makes this sound an
 /// example too, so the next suggestion is better informed.
 function showUserTags(file, data) {
+  // **Tagging does not travel to the edge build.** The panel this filled was
+  // removed from `index.html`, and the classifier behind it — `yamnet`, which
+  // is `tract-onnx` — is thirteen megabytes of neural network runtime with
+  // nothing to do here. See `docs/PORT.md`.
+  //
+  // Emptied rather than deleted: the body is what has gone, the name stays so
+  // that its callers do not have to be found and edited one by one. Stripping
+  // the callers is a pass of its own.
+  return;
+
   const mine = data?.mine || [];
   const learned = data?.learned || [];
   state.userTags[file.path] = mine;
@@ -9972,14 +9990,7 @@ async function setUserTags(file, tags) {
   showUserTags(file, r);
 }
 
-$('addUserTag').onkeydown = (e) => {
-  if (e.key !== 'Enter') return;
-  const file = state.selectedFile;
-  const tag = e.target.value.trim();
-  if (!file || !tag) return;
-  e.target.value = '';
-  setUserTags(file, [...(state.userTags[file.path] || []), tag]);
-};
+// (The tag entry box is gone with the rest of tagging.)
 
 /// What the classifier named the sound, as opposed to what it is like.
 ///
@@ -9987,6 +9998,16 @@ $('addUserTag').onkeydown = (e) => {
 /// guess is still information, and pretending to be certain about it would be
 /// worse than showing the number. A borrowed label says whose it is.
 function showHeard(file, words) {
+  // **Tagging does not travel to the edge build.** The panel this filled was
+  // removed from `index.html`, and the classifier behind it — `yamnet`, which
+  // is `tract-onnx` — is thirteen megabytes of neural network runtime with
+  // nothing to do here. See `docs/PORT.md`.
+  //
+  // Emptied rather than deleted: the body is what has gone, the name stays so
+  // that its callers do not have to be found and edited one by one. Stripping
+  // the callers is a pass of its own.
+  return;
+
   const box = $('heardTags');
   if (!box) return;
   state.heard[file.path] = words;
@@ -10021,6 +10042,16 @@ function showHeard(file, words) {
 /// what the panel used to be and there is no reason to take it away — but the
 /// moment you click a file the fields follow the file.
 function fillTagPanel(folder) {
+  // **Tagging does not travel to the edge build.** The panel this filled was
+  // removed from `index.html`, and the classifier behind it — `yamnet`, which
+  // is `tract-onnx` — is thirteen megabytes of neural network runtime with
+  // nothing to do here. See `docs/PORT.md`.
+  //
+  // Emptied rather than deleted: the body is what has gone, the name stays so
+  // that its callers do not have to be found and edited one by one. Stripping
+  // the callers is a pass of its own.
+  return;
+
   if (state.selectedFile) return;
   const e = state.tagEdits[folder.name] || {};
   $('editLevel1').value = e.level1 ?? folder.level1;
@@ -10037,6 +10068,16 @@ function fillTagPanel(folder) {
 /// decision, and overwriting it with a fresh guess would undo their work every
 /// time they clicked the file.
 function fillFileTags(file, suggest, saved) {
+  // **Tagging does not travel to the edge build.** The panel this filled was
+  // removed from `index.html`, and the classifier behind it — `yamnet`, which
+  // is `tract-onnx` — is thirteen megabytes of neural network runtime with
+  // nothing to do here. See `docs/PORT.md`.
+  //
+  // Emptied rather than deleted: the body is what has gone, the name stays so
+  // that its callers do not have to be found and edited one by one. Stripping
+  // the callers is a pass of its own.
+  return;
+
   const e = state.tagEdits[file.path] || {};
   const pick = (k) => e[k] ?? saved?.[k] ?? suggest?.[k] ?? '';
   $('editLevel1').value = pick('level1');
@@ -10051,50 +10092,26 @@ function fillFileTags(file, suggest, saved) {
     : saved ? 'saved earlier' : 'suggested from the audio and the filename';
 }
 
-for (const [id, key] of [['editLevel1', 'level1'], ['editLevel2', 'level2'],
-                         ['editTags', 'tags'], ['editNotes', 'notes']]) {
-  $(id).onchange = (e) => {
-    // Whichever the panel is currently describing.
-    const name = state.selectedFile?.path || state.selectedFolder;
-    if (!name) return;
-    (state.tagEdits[name] ??= {})[key] = e.target.value.trim();
-    updateDirty();
-    if (state.selectedFile) $('tagSource').textContent = 'edited, not yet committed';
-  };
-}
+// (The four tag inputs are gone.)
 
 function updateDirty() {
+  // **Tagging does not travel to the edge build.** The panel this filled was
+  // removed from `index.html`, and the classifier behind it — `yamnet`, which
+  // is `tract-onnx` — is thirteen megabytes of neural network runtime with
+  // nothing to do here. See `docs/PORT.md`.
+  //
+  // Emptied rather than deleted: the body is what has gone, the name stays so
+  // that its callers do not have to be found and edited one by one. Stripping
+  // the callers is a pass of its own.
+  return;
+
   const n = Object.keys(state.tagEdits).length;
   $('dirtyLabel').textContent = n ? `${n} unsaved change${n === 1 ? '' : 's'}` : '';
 }
 
-$('discardBtn').onclick = () => {
-  state.tagEdits = {};
-  updateDirty();
-  if (state.selectedFile) selectFile(state.selectedFile);
-  else {
-    const f = state.folders.find((x) => x.name === state.selectedFolder);
-    if (f) fillTagPanel(f);
-  }
-  toast('Tag edits discarded');
-};
+// (Discard belonged to the tag panel.)
 
-$('commitBtn').onclick = async () => {
-  const edits = state.tagEdits;
-  if (!Object.keys(edits).length) { toast('Nothing to commit'); return; }
-
-  // A key with a slash in it is a file; anything else is a folder name.
-  const folders = {}, files = {};
-  for (const [k, v] of Object.entries(edits)) {
-    (k.includes('/') ? files : folders)[k] = v;
-  }
-  try {
-    const r = await postJSON('/api/save', { folders, files });
-    toast(`Committed — ${r.foldersWritten} _TAGS.txt written`);
-    state.tagEdits = {};
-    updateDirty();
-  } catch (e) { toast('Commit failed: ' + e.message); }
-};
+// (Commit belonged to the tag panel.)
 
 // ==================================================================== search
 
