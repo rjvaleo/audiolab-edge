@@ -91,7 +91,9 @@
 #leftRail.rl.open .rl-item .rl-lb { opacity: 1; }
 
 #leftRail .rl-item:hover { background: var(--surface-3); color: var(--text-2); }
-#leftRail .rl-item.active {
+/* `.rl-on`, not `.active` — see the note in `rail.js`. The app's `.active` is
+   two independent flags and this column has one question. */
+#leftRail .rl-item.rl-on {
   background: var(--surface-3);
   border-left-color: var(--accent);
   color: var(--accent);
@@ -148,6 +150,7 @@
 }
 #leftRail .rl-child:hover { background: var(--surface-3); color: var(--text-2); }
 #leftRail .rl-child.active { color: var(--accent); }
+#leftRail .rl-child.rl-on { color: var(--accent); }
 #leftRail .rl-child:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* ── the handle ────────────────────────────────────────────────────────────

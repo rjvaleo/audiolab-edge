@@ -412,50 +412,49 @@
 
       // ── the transport ──
       //
-      // `a` is the action, the way the desktop names it. Everything here is a
-      // Web Audio `BufferSource`; there is no engine to load and nothing to
-      // stream, because the cloud is rendered whole before it plays.
+      // **Not an action, a set of things to apply.** The desktop's message is
+      // every field it wants changed, and each is optional: `seek` to a frame,
+      // `gain`, `loop: {on, a, b}`, and `play: true|false` for play and pause.
+      // It applies whatever is present, in that order, and answers with the
+      // position.
+      //
+      // I had this as `{ a: 'play' }` — read out of a grep for quoted strings
+      // in the route, which turned up `"a"` and looked like an action key. It
+      // is the `a` of the *loop range*. So every press of play fell through to
+      // "not ported" and nothing made a sound, while calling the route by hand
+      // with the shape I had invented worked perfectly.
       case '/api/engine/transport': {
-        switch (body.a) {
-          case 'play': await start(); break;
-          case 'stop': stop(); play.offset = 0; break;
-          case 'pause': stop(); break;
-          case 'seek':
-            play.offset = Math.max(0, +body.seek || 0);
-            if (play.node) await start();
-            break;
-          case 'loop':
-            play.looping = !!body.on;
-            if (play.node) play.node.loop = play.looping;
-            break;
-          default: return notPorted(`/api/engine/transport a=${body.a}`);
+        if (typeof body.seek === 'number' && isFinite(body.seek)) {
+          play.offset = Math.max(0, body.seek);
+          if (play.node) await start();
         }
-        return json({ ok: true, playing: !!play.node, position: Math.round(position()) });
+        if (typeof body.gain === 'number' && isFinite(body.gain)) {
+          bus.gain.value = Math.max(0, body.gain);
+        }
+        if (body.loop && typeof body.loop === 'object') {
+          play.looping = !!body.loop.on;
+          if (play.node) play.node.loop = play.looping;
+        }
+        if (body.play === true) await start();
+        else if (body.play === false) stop();
+        return json({ position: Math.round(position()) });
       }
-
-      case '/api/rack': {
-        const e = await engine();
-        const text = new TextEncoder().encode(JSON.stringify(body));
-        const ptr = e.ex.alloc((text.length + 3) >> 2);
-        e.u8().set(text, ptr);
-        return json(e.said(e.ex.rack_set(ptr, text.length, audio.rate)));
-      }
-
-      // **One control, live, without rebuilding the chain.** The desktop is
-      // emphatic about this: posting the whole spec on every movement rebuilds
-      // every effect from nothing — delay lines cleared, filters restarted,
-      // reverb tails cut off — which is why the effects stopped feeling
-      // connected to the sound. Nothing here is rendered through the rack yet,
-      // so this is accepted and remembered rather than acted on.
-      case '/api/rack/param':
-        return json({ ok: true });
 
       // Loading is what the desktop does to get a document into its engine.
       // There is nothing to load into here — the document is already in the
       // engine, and the cloud is made from it on demand.
+      // `engineLoad` reads `sampleRate` off this and keeps it as the device's
+      // rate — every frame conversion in the app goes through it, so answering
+      // without it silently pins the playhead to a default.
       case '/api/engine/load':
       case '/api/engine/load/reset':
         play.dirty = true;
+        return json({ ok: true, sampleRate: audio.rate, path: audio.path || '' });
+
+      // The layer governor lives on the desktop's audio thread. There is no
+      // audio thread here — the cloud is rendered whole before it plays — so
+      // there is nothing to shed and nothing to tell.
+      case '/api/engine/shed':
         return json({ ok: true });
 
       default:

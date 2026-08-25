@@ -178,17 +178,92 @@
     };
     rail.append(toggle);
 
-    // Browse's children follow Browse. Watched rather than hooked, because
-    // `setMode` is `app.js`'s and this file does not modify it — the class it
-    // puts on the button is a fact this can read without owning.
+    // ── which one is lit, and what a second click does ──────────────────────
+    //
+    // **`.active` cannot be the highlight, and this is why.** `app.js` toggles
+    // it on `.mode-btn` from `setMode`, and on `.rail-btn` from `showPane` —
+    // two independent sets. Theme is a panel and Browse is a mode, so opening
+    // Theme lit Theme *and left Browse lit*, which is the rail saying you are
+    // in two places at once.
+    //
+    // So the rail keeps its own mark, `.rl-on`, and there is exactly one. The
+    // app's `.active` is left alone; it is still true, it just is not the
+    // question this column is answering.
+    const items = () => [...rail.querySelectorAll('.rl-item')];
+
+    /// **Where you are, worked out — not remembered.**
+    ///
+    /// The first version lit whatever was last clicked and lit `overview` at
+    /// startup. `first-sound.js` then moved the app to Grain without clicking
+    /// anything, so the rail said Browse while the app was in Grain — and the
+    /// second-click check trusted that, decided Browse was already current, and
+    /// swallowed the click. The button looked dead.
+    ///
+    /// A light that is derived cannot disagree with the app. Theme is the
+    /// exception and it earns it: it is a pane rather than a mode, so it is
+    /// where you are whenever it is the pane on show.
+    const current = () => {
+      const theme = document.getElementById('paneTheme');
+      if (theme && !theme.classList.contains('hidden')) {
+        return rail.querySelector('.rl-item[data-panel="theme"]');
+      }
+      const mode = (typeof state !== 'undefined' && state.mode) || 'overview';
+      return rail.querySelector(`.rl-item[data-mode="${mode}"]`);
+    };
+
+    const sync = () => {
+      const now = current();
+      items().forEach((b) => b.classList.toggle('rl-on', b === now));
+    };
+
+    /// The panel this rail opens onto — the file list, the theme editor, the
+    /// library's parts. In Grain and Visual it is a drawer over the work; in
+    /// Browse it is a column beside it. `app.js` owns both behaviours and
+    /// already has the two functions for it.
+    const panelShut = () => {
+      const p = document.getElementById('leftPanel');
+      return p.classList.contains('collapsed') || p.classList.contains('drawer-closed');
+    };
+
+    // Capture, so this sees the click before `app.js`'s own handler on the
+    // button. A second click on the destination you are already at should not
+    // re-enter it — `setMode` to the mode you are in does nothing, which is why
+    // three of the four buttons appeared dead on a second press.
+    rail.addEventListener('click', (e) => {
+      const item = e.target.closest('.rl-item');
+      if (!item || !rail.contains(item)) return;
+
+      if (item === current()) {
+        // Already here: the click means show me the tray, or hide it.
+        e.stopPropagation();
+        e.preventDefault();
+        if (panelShut()) openDrawer(); else closeDrawer();
+        return;
+      }
+
+      // Somewhere else: let `app.js` do the going, then read where that left
+      // us. After its handler, because `setMode` re-reads the panel state and a
+      // destination should always arrive with its tray open.
+      setTimeout(() => { sync(); if (panelShut()) openDrawer(); }, 0);
+    }, true);
+
+    // Browse's children follow Browse.
     const follow = () => {
       const browse = rail.querySelector('.rl-item[data-mode="overview"]');
       const sub = rail.querySelector('.rl-sub');
-      if (browse && sub) sub.classList.toggle('shown', browse.classList.contains('active'));
+      if (browse && sub) sub.classList.toggle('shown', browse.classList.contains('rl-on'));
     };
     new MutationObserver(follow).observe(rail, {
       subtree: true, attributes: true, attributeFilter: ['class'],
     });
+
+    // The app moves without the rail being touched — `first-sound.js` opens in
+    // Grain, a double-click in Browse goes there too. `setMode` writes these
+    // two classes on `<body>`, so watching them is how the rail hears about it.
+    new MutationObserver(() => { sync(); follow(); })
+      .observe(document.body, { attributes: true, attributeFilter: ['class'] });
+
+    sync();
     follow();
   }
 
