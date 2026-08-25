@@ -10,6 +10,16 @@ version = "0.1.0"
 name = "audiolab-engine"
 version = "0.1.0"
 dependencies = [
+ "audio-core",
+ "edit",
+ "fx",
+]
+
+[[package]]
+name = "edit"
+version = "0.1.0"
+dependencies = [
+ "audio-core",
  "fx",
 ]
 

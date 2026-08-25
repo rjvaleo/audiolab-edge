@@ -9,6 +9,16 @@ crate-type = ["cdylib"]
 
 [dependencies]
 fx = { path = "/Users/rjvaleo/Documents/__Audio-Edit---Tag/core/crates/fx" }
+edit = { path = "/Users/rjvaleo/Documents/__Audio-Edit---Tag/core/crates/edit" }
+audio-core = { path = "/Users/rjvaleo/Documents/__Audio-Edit---Tag/core/crates/audio-core" }
+# **Not `server`.** Its serialisers are exactly what this needs, but the crate
+# also pulls `yamnet`, and `yamnet` pulls `tract-onnx` — a neural network
+# runtime. Measured: depending on `server` took the engine from 54 KB to
+# **14.07 MB**, and `wasm-opt -Oz` only got it to 11 MB because none of it is
+# dead. Search-by-sound and tagging do not travel to the edge.
+#
+# So the five modules it does need are compiled in by `#[path]` instead — see
+# `src/lib.rs`. Their source, not a copy of it.
 
 [profile.release]
 opt-level = 3

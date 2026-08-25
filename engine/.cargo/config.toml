@@ -1,0 +1,5 @@
+# getrandom 0.3+ needs both the feature and this cfg to use the browser's
+# crypto. Set here rather than in the main repository: it is a fact about
+# building *this* for a browser, not about the program.
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
