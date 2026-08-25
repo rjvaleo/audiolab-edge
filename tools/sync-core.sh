@@ -12,11 +12,12 @@
 # ~/Documents/__Audio-Edit---Tag, which meant this repository built on exactly
 # one machine in the world. They are copied in now, so a bare `git clone` builds.
 #
-# The copy is allowed to diverge from the desktop, and this script is not a
-# chore anybody has to remember. It exists for the one case where you *do* want
-# the current desktop code — run it, and the copy is refreshed and the
-# provenance note rewritten. --check answers the same question without moving
-# anything.
+# The engine and the file formats are meant to stay level with the desktop —
+# a preset written by one build opens in the other, and that is the contract.
+# The *feature* set is free to differ and this build lags behind, which is
+# normal. So this script is how the format half catches up: run it after
+# changing anything in core/crates/{audio-core,fx,edit} or the four wire files.
+# --check answers whether that is needed without moving anything.
 #
 # ── where the desktop tree is looked for ─────────────────────────────────────
 #
@@ -98,10 +99,12 @@ DIRTY="$(git -C "$REPO" status --porcelain \
   echo "# Where this came from"
   echo
   echo "Everything under \`engine/vendor/\` was copied, byte for byte, out of the"
-  echo "desktop build at the commit below. It is this build's source now and is free"
-  echo "to diverge — this repository is a proof that the engine runs at the edge, not"
-  echo "a second distribution of it. Re-copy with \`tools/sync-core.sh\` if you ever"
-  echo "want the desktop's current code; there is no obligation to."
+  echo "desktop build at the commit below. Do not edit it here — a sync overwrites"
+  echo "without asking. Change it in the desktop tree and re-run \`tools/sync-core.sh\`."
+  echo
+  echo "These files are the contract between the two builds: a preset, a session or a"
+  echo "rack spec written by either has to open in the other. The *feature* set is free"
+  echo "to differ. This is not."
   echo
   echo "| | |"
   echo "|---|---|"

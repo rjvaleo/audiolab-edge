@@ -1,10 +1,12 @@
 # Where this came from
 
 Everything under `engine/vendor/` was copied, byte for byte, out of the
-desktop build at the commit below. It is this build's source now and is free
-to diverge — this repository is a proof that the engine runs at the edge, not
-a second distribution of it. Re-copy with `tools/sync-core.sh` if you ever
-want the desktop's current code; there is no obligation to.
+desktop build at the commit below. Do not edit it here — a sync overwrites
+without asking. Change it in the desktop tree and re-run `tools/sync-core.sh`.
+
+These files are the contract between the two builds: a preset, a session or a
+rack spec written by either has to open in the other. The *feature* set is free
+to differ. This is not.
 
 | | |
 |---|---|

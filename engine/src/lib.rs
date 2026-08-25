@@ -36,11 +36,12 @@ use std::cell::RefCell;
 // reach for `edit`, `fx`, `json` and std; not one of them mentions yamnet,
 // search, catalog or indexer — checked, not assumed.
 //
-// **These are copies, and they are allowed to diverge.** This repository is a
-// proof that the engine runs at the edge, not a second distribution of it — so
-// the copy under `vendor/` is simply this build's source now, and the desktop
-// owes it nothing. `tools/sync-core.sh` re-copies if that is ever wanted;
-// `vendor/SOURCE.md` records the commit this one came from.
+// **These are copies, and they are meant to stay level.** The file formats are
+// the contract between the two builds — a preset or a session written here has
+// to open there — and these four files *are* the format. The feature set is
+// free to differ; this is not. `tools/sync-core.sh` re-copies,
+// `vendor/SOURCE.md` records which commit from, and `docs/EDGE-PARITY.md` in
+// the desktop repository is the method.
 #[path = "../vendor/wire/json.rs"]
 mod json;
 #[path = "../vendor/wire/rack.rs"]

@@ -106,16 +106,26 @@ repository. That is what makes "the same engine, not a reimplementation"
 literally true, and it is why a bare `git clone` of this repository builds on a
 machine that has never seen the desktop tree.
 
-**This copy is allowed to drift, and probably will.** That is a decision, not an
-oversight: this repository is a proof that the engine runs at the edge, not a
-second distribution of it. The desktop build carries on doing what it does and
-owes this nothing; nothing here has to be kept level with it.
+**The copy is meant to stay level with the desktop, and the feature set is
+not.** Those are two different rules and the split is deliberate:
 
-If you ever do want the current desktop code, that is one command:
+- **the engine and the file formats — identical.** A preset, a session, a rack
+  spec or an exported AIFF written by either build opens in the other. That is
+  the contract, and it is why these seven things are copied rather than
+  reimplemented.
+- **the features — this build is a subset.** No disk, no device, no library, no
+  tags. It lags the desktop and that is normal, not a fault.
+
+Bringing the engine up to date is one command:
 
     tools/sync-core.sh            # re-copy, and rewrite the provenance note
     tools/sync-core.sh --check    # or just ask whether anything has moved
 
 `engine/vendor/SOURCE.md` records which commit this copy came from. Both find
 the desktop tree at `$AUDIOLAB_CORE` or beside this one at
-`../__Audio-Edit---Tag/core`, and both are entirely optional.
+`../__Audio-Edit---Tag/core`, and both pass quietly where there is neither.
+
+The routes are the part that does not arrive by itself — `node
+tools/port-status.mjs` lists every `/api/*` the interface calls that this build
+does not answer. The method is written up in the desktop repo, in
+`docs/EDGE-PARITY.md`.
