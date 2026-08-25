@@ -1,12 +1,11 @@
 //! The server's answers, without the server.
 //!
-//! **This calls the desktop build's own code.** `docs::edit_json` is the
+//! **This runs the desktop build's own code.** `docs::edit_json` is the
 //! function `/api/edit` already used to serialise a document, and
 //! `persist::stretch_from_json` is the one it already used to read the stretch
-//! panel back. Depending on the `server` crate — which compiles for
-//! `wasm32-unknown-unknown` with nothing but a `getrandom` backend to set —
-//! means those answers cannot drift from the desktop's, because they *are* the
-//! desktop's.
+//! panel back. Those answers match the desktop's because they are computed by
+//! the same source — vendored into `vendor/`, byte for byte, from a named
+//! commit. See `vendor/SOURCE.md` and `tools/sync-core.sh`.
 //!
 //! What is genuinely new here is plumbing: one document held in memory instead
 //! of a library on disk, and a C ABI instead of HTTP. See `docs/PORT.md`.
@@ -19,13 +18,13 @@ use std::cell::RefCell;
 
 // ── the desktop build's own wire format ──
 //
-// **Its source files, compiled in — not a copy, and not a dependency.**
+// **Its source files, compiled in — vendored, not depended on.**
 //
 // `docs::edit_json` is the function `/api/edit` already used to serialise a
 // document; `persist::stretch_from_json` is the one that already read the
 // stretch panel back. Using them is what makes this a port rather than a
-// rebuild: those answers cannot drift from the desktop's, because they *are*
-// the desktop's. Edit them over there and this build changes too.
+// rebuild: the answers are the desktop's answers because they are computed by
+// the desktop's code.
 //
 // **Depending on the `server` crate was the obvious way to get them, and it is
 // the wrong one.** Measured: it took this module from 54 KB to **14.07 MB**,
@@ -33,12 +32,19 @@ use std::cell::RefCell;
 // runtime, there for search-by-sound and for tagging. Neither travels to the
 // edge, and `wasm-opt -Oz` only reached 11 MB because none of it was dead.
 //
-// `#[path]` takes the five files the wire format needs and nothing else. They
+// `#[path]` takes the four files the wire format needs and nothing else. They
 // reach for `edit`, `fx`, `json` and std; not one of them mentions yamnet,
 // search, catalog or indexer — checked, not assumed.
-#[path = "/Users/rjvaleo/Documents/__Audio-Edit---Tag/core/crates/server/src/json.rs"]
+//
+// **These are copies, and a copy can drift.** That is the price of a repository
+// that builds on a machine that has never seen the desktop tree — which it now
+// does, and did not before. `tools/sync-core.sh --check` diffs every vendored
+// file against a desktop checkout and fails loudly if one has moved; run it
+// after changing anything in `core/crates/{audio-core,fx,edit}` or in the four
+// files below. `vendor/SOURCE.md` records the commit this copy was taken from.
+#[path = "../vendor/wire/json.rs"]
 mod json;
-#[path = "/Users/rjvaleo/Documents/__Audio-Edit---Tag/core/crates/server/src/rack.rs"]
+#[path = "../vendor/wire/rack.rs"]
 mod rack;
 /// **Automation does not travel, and this is the shape of its absence.**
 ///
@@ -70,9 +76,9 @@ mod automation {
         }
     }
 }
-#[path = "/Users/rjvaleo/Documents/__Audio-Edit---Tag/core/crates/server/src/persist.rs"]
+#[path = "../vendor/wire/persist.rs"]
 mod persist;
-#[path = "/Users/rjvaleo/Documents/__Audio-Edit---Tag/core/crates/server/src/docs.rs"]
+#[path = "../vendor/wire/docs.rs"]
 mod docs;
 
 use json::Value;

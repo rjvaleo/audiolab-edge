@@ -88,15 +88,20 @@ now `ui/port/app.js` and `index.html` have been byte-for-byte the desktop's, and
 that was the whole argument for calling this a port. After this they are not.
 
 That is the right trade and the line is in the right place. What must not drift
-is the **engine** — `fx`, `edit`, `audio-core` and the wire format — and it
-cannot, because it is consumed by path and compiled from the desktop tree rather
-than copied. The interface is a different matter: this build has no disk, no
+is the **engine** — `fx`, `edit`, `audio-core` and the wire format. It is
+vendored into `engine/vendor/`, byte for byte from a named desktop commit, and
+`tools/sync-core.sh --check` is what keeps that honest: it was consumed straight
+from the desktop tree by absolute path until 25 Aug, which could not drift but
+also meant this repository built on exactly one machine. The interface is a
+different matter: this build has no disk, no
 tags, no scan and no export, so its rail was always going to differ. Better a
 rail designed for what this is than a copy of one designed for something else.
 
 So the rule from here is: **the engine is shared and the interface is ours.**
-A change to `ui/port/` is a change to this build alone, and anything that
-belongs to both goes in the desktop tree where both can compile it.
+A change to `ui/port/` is a change to this build alone. Anything that belongs to
+both is written **in the desktop tree** and carried across with
+`tools/sync-core.sh` — never edited inside `engine/vendor/`, which is a copy and
+will be overwritten without warning the next time it is synced.
 
 ## Order of work
 

@@ -22,4 +22,14 @@ source = "component/target/wasm32-wasip2/release/audiolab_edge.wasm"
 # build at all on a clean checkout.
 command = "cargo build --release --manifest-path ../engine/Cargo.toml --target wasm32-unknown-unknown && cargo build --release --target wasm32-wasip2"
 workdir = "component"
-watch = ["src/**/*.rs", "../ui/**/*", "../engine/src/**/*.rs", "../sounds/**/*", "Cargo.toml"]
+# `../engine/vendor/**/*.rs` is in here because the vendored crates are now the
+# engine's actual source. Without it `spin watch` rebuilds for a change to
+# engine/src and sits still for a change to the DSP underneath it.
+watch = [
+  "src/**/*.rs",
+  "../ui/**/*",
+  "../engine/src/**/*.rs",
+  "../engine/vendor/**/*.rs",
+  "../sounds/**/*",
+  "Cargo.toml",
+]

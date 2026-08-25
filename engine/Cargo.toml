@@ -8,17 +8,39 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-fx = { path = "/Users/rjvaleo/Documents/__Audio-Edit---Tag/core/crates/fx" }
-edit = { path = "/Users/rjvaleo/Documents/__Audio-Edit---Tag/core/crates/edit" }
-audio-core = { path = "/Users/rjvaleo/Documents/__Audio-Edit---Tag/core/crates/audio-core" }
+fx = { path = "vendor/fx" }
+edit = { path = "vendor/edit" }
+audio-core = { path = "vendor/audio-core" }
 # **Not `server`.** Its serialisers are exactly what this needs, but the crate
 # also pulls `yamnet`, and `yamnet` pulls `tract-onnx` — a neural network
 # runtime. Measured: depending on `server` took the engine from 54 KB to
 # **14.07 MB**, and `wasm-opt -Oz` only got it to 11 MB because none of it is
 # dead. Search-by-sound and tagging do not travel to the edge.
 #
-# So the five modules it does need are compiled in by `#[path]` instead — see
-# `src/lib.rs`. Their source, not a copy of it.
+# So the four modules it does need are compiled in by `#[path]` from
+# `vendor/wire/` instead — see `src/lib.rs`.
+
+# ── the workspace ────────────────────────────────────────────────────────────
+#
+# **This exists so the vendored crates can be byte-identical to the desktop's.**
+#
+# All three say `edition.workspace = true` and `license.workspace = true`, which
+# is only meaningful inside a workspace that declares them. The alternative was
+# to rewrite those two lines in each vendored manifest — three small edits that
+# would then show up in every drift check for ever, and the whole point of
+# copying whole is that `diff -r` returns nothing.
+#
+# So the values are repeated here instead, taken from `core/Cargo.toml` in the
+# desktop tree. If they change over there, `tools/sync-core.sh --check` will not
+# catch it — it compares the crates, not this file. They have not changed since
+# the workspace was created and there is no reason for them to.
+[workspace]
+members = ["vendor/audio-core", "vendor/fx", "vendor/edit"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
 
 [profile.release]
 opt-level = 3

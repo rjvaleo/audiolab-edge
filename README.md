@@ -95,7 +95,23 @@ the desktop build, and it **does not change** for this. Ten crates, ~53,700
 lines of Rust, 1,033 Rust tests and 223 browser tests.
 
 This repository was seeded by copying rather than by forking history: nothing
-here shares a commit with it, and the 87.83 MB of audio in its history should
-not follow it anywhere. The engine crates are consumed by path today, which is
-what makes "the same engine, not a reimplementation" literally true — and is
-also the thing to revisit before anyone else has to build this.
+here shares a commit with it, and the audio in its history should not follow it
+anywhere — which is also why it is not a submodule. Pulling the desktop tree in
+that way costs a **407 MB fetch and a 1,028 MB checkout** to obtain 1.2 MB of
+source, and none of the gigabyte is anything this build can use.
+
+So the engine is **vendored**. `engine/vendor/` holds `audio-core`, `fx`, `edit`
+and the four wire-format files, copied byte for byte from a named commit of that
+repository. That is what makes "the same engine, not a reimplementation"
+literally true, and it is why a bare `git clone` of this repository builds on a
+machine that has never seen the desktop tree.
+
+The price of a copy is that it can drift, so drift is one command away:
+
+    tools/sync-core.sh --check    # has the copy moved? exit 1 if so
+    tools/sync-core.sh            # bring it up to date, rewrite the provenance
+
+`engine/vendor/SOURCE.md` records which commit the copy was taken from. Both
+commands find the desktop tree at `$AUDIOLAB_CORE`, or beside this one at
+`../__Audio-Edit---Tag/core`; with neither present `--check` says so and passes,
+because there is nothing to compare against.
