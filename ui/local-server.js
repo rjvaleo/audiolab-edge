@@ -128,6 +128,79 @@
     audio.rate = decoded.sampleRate;
   }
 
+  // ── the transport ──
+  //
+  // **Web Audio is the device.** The desktop server owns a sound card and keeps
+  // a scope ring of the last 16,384 frames it sent out; here the browser plays
+  // a buffer we rendered, so the same window is a slice of that buffer at the
+  // playhead. Same number, same purpose — `SCOPE_FRAMES` in `transport.rs`.
+  const SCOPE_FRAMES = 16384;
+
+  /// `?silent` renders, meters and draws without connecting to the speakers.
+  /// A picture should not need a sound card to be looked at.
+  const SILENT = new URLSearchParams(location.search).has('silent');
+
+  const play = {
+    node: null,
+    buffer: null,     // the rendered cloud, as a Float32Array, interleaved
+    frames: 0,
+    startedAt: 0,     // ctx.currentTime when it began
+    offset: 0,        // where in the cloud it began, in frames
+    looping: false,
+    dirty: true,      // the document moved, so the cloud is stale
+  };
+
+  /// Where the playhead is, in frames of the rendered cloud.
+  function position() {
+    if (!play.node) return play.offset;
+    const on = (context().currentTime - play.startedAt) * audio.rate;
+    const at = play.offset + on;
+    return play.frames ? (play.looping ? at % play.frames : Math.min(at, play.frames)) : 0;
+  }
+
+  /// Make the cloud, if the document has moved since the last one.
+  ///
+  /// The engine renders from `list.stretch`, so this needs no parameters: what
+  /// the twenty-two grain controls wrote to the document *is* what comes out.
+  async function cloud() {
+    if (!play.dirty && play.buffer) return play.buffer;
+    const e = await engine();
+    const n = e.ex.render();
+    if (!n) return null;
+    const at = e.ex.out_ptr() >>> 2;
+    play.buffer = e.f32().slice(at, at + n);
+    play.frames = Math.floor(n / audio.channels);
+    play.dirty = false;
+    return play.buffer;
+  }
+
+  function stop() {
+    if (play.node) {
+      play.offset = position();
+      try { play.node.stop(); } catch { /* already stopped */ }
+      play.node = null;
+    }
+  }
+
+  async function start() {
+    const flat = await cloud();
+    if (!flat) return;
+    stop();
+    const ctx = context();
+    const buf = ctx.createBuffer(audio.channels, play.frames, audio.rate);
+    for (let c = 0; c < audio.channels; c++) {
+      const dst = buf.getChannelData(c);
+      for (let i = 0; i < play.frames; i++) dst[i] = flat[i * audio.channels + c];
+    }
+    const node = ctx.createBufferSource();
+    node.buffer = buf;
+    node.loop = play.looping;
+    if (!SILENT) node.connect(ctx.destination);
+    node.start(0, Math.min(play.offset, play.frames - 1) / audio.rate);
+    play.node = node;
+    play.startedAt = ctx.currentTime;
+  }
+
   async function handle(path) {
     const url = new URL(path, location.origin);
     const p = url.pathname;
@@ -203,6 +276,63 @@
       case '/api/grains/cap':
         return json({ cap: 4000 });
 
+      // ── the engine ──
+
+      case '/api/engine/state': {
+        const at = position();
+        return json({
+          capturedFrames: 0,
+          capturing: false,
+          channels: audio.channels,
+          // Web Audio is the device, and it is always there. The desktop
+          // reports false when there is no sound card; a browser tab that has
+          // an `AudioContext` has an output by definition.
+          device: true,
+          inFrames: 0,
+          load: { late: 0, layerCap: 64, layersRunning: 1, mean: 0, now: 0, shedding: false, worst: 0 },
+          overflows: 0,
+          path: audio.path || '',
+          playing: !!play.node,
+          position: Math.round(at),
+          sampleRate: audio.rate,
+          stream: {},
+        });
+      }
+
+      // **The window behind the playhead**, which is what the desktop's scope
+      // ring holds for exactly this. Not the whole cloud: a meter reads the
+      // moment, and an FFT of fifty seconds is not a spectrum of now.
+      case '/api/engine/master': {
+        const e = await engine();
+        if (!play.buffer || !play.node) return json({ live: false });
+        const ch = audio.channels;
+        const at = Math.floor(position());
+        const end = Math.max(0, Math.min(play.frames, at));
+        const from = Math.max(0, end - SCOPE_FRAMES);
+        const slice = play.buffer.subarray(from * ch, end * ch);
+        if (slice.length < ch * 64) return json({ live: false });
+        const ptr = e.ex.alloc(slice.length);
+        e.f32().set(slice, ptr >>> 2);
+        const n = e.ex.meter_json(
+          ptr, slice.length, ch, audio.rate,
+          +url.searchParams.get('fft') || 4096,
+          +url.searchParams.get('bands') || 256,
+        );
+        return json(e.said(n));
+      }
+
+      case '/api/grains': {
+        const path = url.searchParams.get('p');
+        if (path) await open(path);
+        const e = await engine();
+        const n = e.ex.grains_json(
+          +url.searchParams.get('from') || 0,
+          +url.searchParams.get('to') || 0,
+          +url.searchParams.get('cap') || 4000,
+        );
+        return json(e.said(n));
+      }
+
       default:
         return notPorted(p + url.search);
     }
@@ -223,8 +353,44 @@
         const text = new TextEncoder().encode(JSON.stringify(body));
         const ptr = e.ex.alloc((text.length + 3) >> 2);
         e.u8().set(text, ptr);
-        return json(e.said(e.ex.doc_apply(ptr, text.length)));
+        const out = e.said(e.ex.doc_apply(ptr, text.length));
+        // The document moved, so the cloud in the air is of the old one. Marked
+        // rather than re-rendered: a slider sends one of these per movement and
+        // rendering each would be a quarter of a second of work thrown away.
+        play.dirty = true;
+        return json(out);
       }
+
+      // ── the transport ──
+      //
+      // `a` is the action, the way the desktop names it. Everything here is a
+      // Web Audio `BufferSource`; there is no engine to load and nothing to
+      // stream, because the cloud is rendered whole before it plays.
+      case '/api/engine/transport': {
+        switch (body.a) {
+          case 'play': await start(); break;
+          case 'stop': stop(); play.offset = 0; break;
+          case 'pause': stop(); break;
+          case 'seek':
+            play.offset = Math.max(0, +body.seek || 0);
+            if (play.node) await start();
+            break;
+          case 'loop':
+            play.looping = !!body.on;
+            if (play.node) play.node.loop = play.looping;
+            break;
+          default: return notPorted(`/api/engine/transport a=${body.a}`);
+        }
+        return json({ ok: true, playing: !!play.node, position: Math.round(position()) });
+      }
+
+      // Loading is what the desktop does to get a document into its engine.
+      // There is nothing to load into here — the document is already in the
+      // engine, and the cloud is made from it on demand.
+      case '/api/engine/load':
+      case '/api/engine/load/reset':
+        play.dirty = true;
+        return json({ ok: true });
 
       default:
         return notPorted(p);

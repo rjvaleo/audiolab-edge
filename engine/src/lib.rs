@@ -100,6 +100,25 @@ pub extern "C" fn alloc(len: usize) -> *mut f32 {
     p
 }
 
+
+/// The band limits the room's floor is laid out for, from `routes.rs`.
+const MASTER_LO_HZ: f32 = 20.0;
+const MASTER_HI_HZ: f32 = 20_000.0;
+const LISSAJOUS_POINTS: usize = 1024;
+
+fn round4(v: f32) -> f64 {
+    ((v * 10_000.0).round() / 10_000.0) as f64
+}
+
+fn channel_json(c: &audio_core::meter::Channel) -> Value {
+    Value::obj()
+        .set("vu", c.vu as f64)
+        .set("vuDb", c.vu_db as f64)
+        .set("vuUnits", c.vu_units as f64)
+        .set("peak", c.peak as f64)
+        .set("peakDb", c.peak_db as f64)
+}
+
 fn say(v: &Value) -> usize {
     let s = v.to_string().into_bytes();
     let n = s.len();
@@ -212,6 +231,202 @@ pub extern "C" fn peaks_json(buckets: usize) -> usize {
         Value::obj().set("channels", Value::Arr(chans))
     });
     say(&out)
+}
+
+/// What the master bus is doing right now, in the shape `/api/engine/master`
+/// answers.
+///
+/// **The numbers are `audio_core::meter`'s**, the same functions the desktop
+/// route calls: `master` for the ballistics, `spectrum` for the log-spaced
+/// bands, `lissajous` for the figure. So the VU is EBU R68 with 0 VU at −18
+/// dBFS here exactly as it is there, rather than something plausible written
+/// against a browser's `AnalyserNode`.
+///
+/// The assembly around them is written out, because it lives inside
+/// `api_engine_master` in `routes.rs` — a function that takes an `App` and a
+/// `Request`, neither of which exists here. Field names, rounding and the
+/// interleaved figure all follow that function line for line.
+///
+/// The page passes the window of sound *behind the playhead*, which is what the
+/// desktop's transport keeps in its scope ring for exactly this purpose.
+#[no_mangle]
+pub extern "C" fn meter_json(
+    input: *const f32,
+    len: usize,
+    channels: usize,
+    rate: u32,
+    fft: usize,
+    bands: usize,
+) -> usize {
+    if input.is_null() || len == 0 {
+        return say(&Value::obj().set("live", false));
+    }
+    let src = unsafe { std::slice::from_raw_parts(input, len) };
+    let ch = channels.max(1);
+    let frames = src.len() / ch;
+
+    // Split, because every meter function takes two channels. A mono source is
+    // the same signal twice, which is what it sounds like.
+    let mut l = Vec::with_capacity(frames);
+    let mut r = Vec::with_capacity(frames);
+    for f in 0..frames {
+        l.push(src[f * ch]);
+        r.push(src[f * ch + if ch > 1 { 1 } else { 0 }]);
+    }
+
+    let fft = fft.clamp(256, 16_384).next_power_of_two();
+    let nbands = bands.clamp(24, 2048);
+
+    let m = audio_core::meter::master(&l, &r, rate, fx::CEILING_KNEE);
+    let spectrum =
+        audio_core::meter::spectrum(&l, &r, rate, fft, nbands, MASTER_LO_HZ, MASTER_HI_HZ);
+    let pts = audio_core::meter::lissajous(&l, &r, LISSAJOUS_POINTS);
+
+    // Flat, and interleaved. A thousand `[l, r]` arrays is twice the JSON of a
+    // thousand pairs of numbers and says exactly the same thing.
+    let mut xy = Vec::with_capacity(pts.len() * 2);
+    for (a, b) in &pts {
+        xy.push(Value::Num(round4(*a)));
+        xy.push(Value::Num(round4(*b)));
+    }
+
+    say(&Value::obj()
+        .set("live", true)
+        .set("rate", rate as f64)
+        .set("frames", m.frames as f64)
+        .set("left", channel_json(&m.left))
+        .set("right", channel_json(&m.right))
+        .set("correlation", m.correlation as f64)
+        .set("overKnee", m.over_knee as f64)
+        .set("vuRef", audio_core::meter::VU_REF_DBFS as f64)
+        .set("fft", fft as f64)
+        .set("bins", (rate as f64) / fft as f64)
+        .set("knee", fx::CEILING_KNEE as f64)
+        .set("lo", MASTER_LO_HZ as f64)
+        .set("hi", MASTER_HI_HZ as f64)
+        .set(
+            "spectrum",
+            Value::Arr(spectrum.into_iter().map(round4).map(Value::Num).collect()),
+        )
+        .set("lissajous", Value::Arr(xy)))
+}
+
+/// The grain schedule, in the shape `/api/grains` answers.
+///
+/// **From the same enumeration the renderer uses.** That is the property the
+/// desktop route exists to preserve — the picture cannot show grains the audio
+/// does not contain, because both come out of `fx::grain::grains_sampled`.
+///
+/// Each grain is eight numbers, in the desktop's order and to the desktop's
+/// rounding: where it lands, where it reads from, how long, how far it is
+/// pitched, how loud, how bright, where it sits across the field, and its own
+/// index. The index is the grain's rather than the array's, because every
+/// jitter it carries is a pure function of that number and thinning the list
+/// would otherwise change what a grain *is*.
+/// `f64` rather than `u64` for the window, deliberately.
+///
+/// A `u64` across the wasm boundary arrives in JavaScript as a **BigInt**, and
+/// passing it an ordinary number throws `Cannot convert 0 to a BigInt` from
+/// inside `api()` — which reads as the interface being broken rather than as a
+/// type mismatch two layers down. Frame positions come from the page as
+/// numbers; they should be taken as numbers.
+#[no_mangle]
+pub extern "C" fn grains_json(from: f64, to: f64, cap: usize) -> usize {
+    let (from, to) = (from.max(0.0) as u64, to.max(0.0) as u64);
+    let Some((ch, rate, st, frames)) = DOC.with(|d| {
+        d.borrow()
+            .as_ref()
+            .map(|l| (l.channels as usize, l.sample_rate, l.stretch, l.base_frames()))
+    }) else {
+        return error("no document open");
+    };
+
+    let window = if to > from { Some((from, to)) } else { None };
+    let (sent, total) = fx::grain::grains_sampled(
+        frames as usize,
+        rate,
+        st.ratio,
+        st.semitones,
+        st.window_ms,
+        &st.grain,
+        cap.max(1),
+        window,
+    );
+
+    // **What each grain actually sounds like, not just where it sits.** The
+    // visualiser is driven by the audio, so loudness and brightness come from
+    // the source window the grain reads rather than from the parameters that
+    // scheduled it. Every eighth frame is plenty for a display value and keeps
+    // a dense stream from turning into a full second of arithmetic.
+    let measure = |start: f32, len: usize| -> (f32, f32) {
+        SRC.with(|src| {
+            let buf = src.borrow();
+            let total = buf.len() / ch.max(1);
+            let a = (start as usize).min(total.saturating_sub(1));
+            let b = (a + len).min(total);
+            if b <= a + 1 {
+                return (0.0, 0.0);
+            }
+            let (mut sum, mut n, mut crossings, mut prev) = (0f64, 0u32, 0u32, 0f32);
+            for f in (a..b).step_by(8) {
+                let v = buf[f * ch];
+                sum += (v as f64) * (v as f64);
+                if prev <= 0.0 && v > 0.0 {
+                    crossings += 1;
+                }
+                prev = v;
+                n += 1;
+            }
+            let rms = if n > 0 { (sum / n as f64).sqrt() as f32 } else { 0.0 };
+            // Zero-crossing rate as a cheap brightness proxy: no FFT per grain.
+            let bright = if n > 1 { crossings as f32 / n as f32 } else { 0.0 };
+            (rms, bright.min(1.0))
+        })
+    };
+
+    /// Equal power either side of centre, from the same function that places
+    /// the grain in the audio. The cloud needs a left-and-right that is real
+    /// rather than decorative, and this is the only one a grain has.
+    fn pan_of(g: &fx::Grain, index: u64) -> f32 {
+        let (l, r) = fx::grain::pan_gains(g, index, 2);
+        let sum = l + r;
+        if sum <= 1e-6 {
+            0.0
+        } else {
+            ((r - l) / sum).clamp(-1.0, 1.0)
+        }
+    }
+
+    let r2 = |v: f32, places: i32| -> f64 {
+        let m = 10f64.powi(places);
+        (v as f64 * m).round() / m
+    };
+
+    let arr: Vec<Value> = sent
+        .iter()
+        .map(|e| {
+            let (rms, bright) = measure(e.src_frame, e.size as usize);
+            Value::Arr(vec![
+                Value::Num(e.out_frame as f64),
+                Value::Num(r2(e.src_frame, 2)),
+                Value::Num(e.size as f64),
+                Value::Num(r2(e.pitch_semis, 3)),
+                Value::Num(r2(rms, 4)),
+                Value::Num(r2(bright, 4)),
+                Value::Num(r2(pan_of(&st.grain, e.index), 3)),
+                Value::Num(e.index as f64),
+            ])
+        })
+        .collect();
+
+    let stride = if sent.is_empty() { 1 } else { (total / sent.len()).max(1) };
+    say(&Value::obj()
+        .set("grains", Value::Arr(arr))
+        .set("total", total as f64)
+        .set("stride", stride as f64)
+        .set("sampleRate", rate as f64)
+        .set("outFrames", (frames as f64 * st.ratio as f64).round())
+        .set("srcFrames", frames as f64))
 }
 
 /// Render the document's cloud. Returns how many `f32` came out; `out_ptr` says
