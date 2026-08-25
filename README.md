@@ -19,13 +19,25 @@ playing.
 Everything is compiled into the component with `include_str!` and
 `include_bytes!`. No static-file serving in front of it, no WASI filesystem.
 
-## Building
+## Building and running
 
+    brew install spinframework/tap/spin      # 4.0.2
     rustup target add wasm32-wasip1
-    cd component && cargo build --release --target wasm32-wasip1
+    spin build
+    spin up --listen 127.0.0.1:3009
 
-`spin build` and `spin up` do the same thing and then run it, if the Spin CLI is
-installed. It is not required to compile.
+`spin build` shells out to `cargo build --release --target wasm32-wasip1`, so
+cargo alone compiles it if the CLI is not to hand. The CLI is what *runs* it,
+and running it is the only way to know it serves rather than merely links.
+
+Verified 25 Aug 2026:
+
+    GET /       200  text/html; charset=utf-8   the embedded page
+    GET /nope   404  no such file in this build
+
+Note that Homebrew's plain `spin` is a different program — the SPIN model
+checker. The tap above is the right one; `fermyon/tap` is the old home and no
+longer carries it.
 
 ## Where it is up to
 
