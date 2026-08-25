@@ -43,18 +43,36 @@ function asked() {
                      'ui/port/rail.js', 'ui/port/stage.js', 'ui/port/room3d.js']) {
     let text;
     try { text = readFileSync(join(ROOT, rel), 'utf8'); } catch { continue; }
-    const lines = text.split('\n');
-    lines.forEach((line, i) => {
-      // api('/api/x'), postJSON('/api/x', …), fetch('/api/x…'), fetch(`/api/x?y=${z}`)
-      const re = /(?:api|postJSON|fetch)\s*\(\s*[`'"](\/api\/[^`'"?]*)/g;
-      let m;
-      while ((m = re.exec(line))) {
-        let p = m[1].replace(/\$\{[^}]*\}/g, ':x').replace(/\/+$/, '');
-        if (!p) continue;
-        if (!found.has(p)) found.set(p, new Set());
-        found.get(p).add(`${rel}:${i + 1}`);
-      }
-    });
+    // **Every `/api/…` string literal, not every `api('/api/…')` call.**
+    //
+    // The first version of this matched the call and the URL together, on one
+    // line, and reported a perfect 46-of-46 while the export button was dead.
+    // Two real call sites were invisible to it: `api(` on app.js:662 with its
+    // template literal on 663, and `let url = \`/api/spectrogram?…\`` on 9693,
+    // built into a variable before being passed. Both happen to be answered, so
+    // the missing column was accidentally right — but a route assembled that
+    // way and *not* answered would appear in neither column, which is precisely
+    // the failure this file exists to catch.
+    //
+    // So the shape of the call is not the signal. A `/api/…` literal in a
+    // source file is the signal, wherever it appears.
+    //
+    // Comments are stripped first, because they are full of route names —
+    // `/api/sounds` appears in a comment in app.js and is not a route this
+    // program has ever called.
+    const code = text
+      .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+      .replace(/(^|[^:])\/\/[^\n]*/g, (m, p) => p + ' '.repeat(m.length - p.length));
+
+    const re = /[`'"](\/api\/[^`'"?\s]*)/g;
+    let m;
+    while ((m = re.exec(code))) {
+      const p = m[1].replace(/\$\{[^}]*\}/g, ':x').replace(/\/+$/, '');
+      if (!p || p === '/api') continue;
+      const line = code.slice(0, m.index).split('\n').length;
+      if (!found.has(p)) found.set(p, new Set());
+      found.get(p).add(`${rel}:${line}`);
+    }
   }
   return found;
 }
