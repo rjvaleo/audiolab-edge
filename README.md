@@ -1,8 +1,8 @@
 # audiolab-edge
 
 Granular audio, at the edge. One page: it plays a short sound, mangles it with
-the granular engine from [audiolab](../__Audio-Edit---Tag), and draws one big
-thing while it does.
+the granular engine from [audiolab](https://github.com/rjvaleo/__Audio-Edit---Tag),
+and draws one big thing while it does.
 
 A **Spin** component, deployed to **Akamai Functions**. See
 [`docs/PLAN.md`](docs/PLAN.md) for what is being built and why.
@@ -90,6 +90,12 @@ Under 2 MB, sounds and all.
 
 ## The other repository
 
-The desktop build lives next door and **does not change**. This one was seeded
-by copying rather than by forking history — nothing here shares a commit with
-it, and the 87.83 MB of audio in its history should not follow it anywhere.
+[**rjvaleo/__Audio-Edit---Tag**](https://github.com/rjvaleo/__Audio-Edit---Tag) —
+the desktop build, and it **does not change** for this. Ten crates, ~53,700
+lines of Rust, 1,033 Rust tests and 223 browser tests.
+
+This repository was seeded by copying rather than by forking history: nothing
+here shares a commit with it, and the 87.83 MB of audio in its history should
+not follow it anywhere. The engine crates are consumed by path today, which is
+what makes "the same engine, not a reimplementation" literally true — and is
+also the thing to revisit before anyone else has to build this.
