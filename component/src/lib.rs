@@ -13,6 +13,11 @@ use spin_sdk::http_component;
 
 const INDEX: &str = include_str!("../../ui/index.html");
 const ENGINE_JS: &str = include_str!("../../ui/engine.js");
+const APP_JS: &str = include_str!("../../ui/app.js");
+const ROOM_JS: &str = include_str!("../../ui/room.js");
+/// The Room, copied from the desktop build and not edited. It reaches for
+/// nothing outside itself, which is the only reason that was possible.
+const VIS_GL_JS: &str = include_str!("../../ui/vis-gl.js");
 /// The granular engine, built for the browser rather than for WASI. Two
 /// different wasm targets in one deployment, which is the whole architecture in
 /// one line: this one is *served*, not run.
@@ -45,6 +50,9 @@ fn handle(req: Request) -> anyhow::Result<impl IntoResponse> {
     let (body, kind) = match path {
         "/" | "/index.html" => (INDEX.as_bytes(), mime("html")),
         "/engine.js" => (ENGINE_JS.as_bytes(), mime("js")),
+        "/app.js" => (APP_JS.as_bytes(), mime("js")),
+        "/room.js" => (ROOM_JS.as_bytes(), mime("js")),
+        "/vis-gl.js" => (VIS_GL_JS.as_bytes(), mime("js")),
         "/engine.wasm" => (ENGINE_WASM, mime("wasm")),
         "/tv-snips.opus" => (TV_SNIPS, mime("opus")),
         _ => {

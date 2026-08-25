@@ -41,7 +41,7 @@ longer carries it.
 
 ## Where it is up to
 
-**Step 2 of 6 — and it was the one that could have failed.** The granular
+**Step 3 of 6.** The granular
 engine runs in the browser, on a sound compiled into the component, and it is
 not close:
 
@@ -56,7 +56,7 @@ SIMD and nothing tuned. There is no argument for rendering on the server.
 |---|---|
 | 1 | **the repository** — `spin.toml`, a page, and a component that serves it ✅ |
 | 2 | **the engine in the browser, playing a shipped sound** ✅ |
-| 3 | the Room |
+| 3 | **the Room, drawn from an `AnalyserNode`** ✅ |
 | 4 | Ridgeline, the theme, the controls |
 | 5 | the rest of the sounds |
 | 6 | deploy |
@@ -80,7 +80,7 @@ With the engine and one sound compiled into it, **315 KB**. The budget:
 
 | | raw |
 |---|---|
-| the component, with the engine and one sound inside it | 315 KB |
+| the component, with the engine, the Room and one sound inside it | 428 KB |
 | — of which the granular engine | 54 KB |
 | Room + Ridgeline | 269 KB |
 | interface, before trimming | 848 KB |
