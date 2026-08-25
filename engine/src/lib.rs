@@ -94,6 +94,8 @@ thread_local! {
     static TEXT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     /// And the last render, likewise.
     static OUT: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
+    /// The one buffer the page writes into — see `scratch`.
+    static SCRATCH: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
     /// The effect rack. One, beside the one document.
     ///
     /// **`default_chain`, not `empty`.** That is what `racks.get` falls back to
@@ -105,14 +107,32 @@ thread_local! {
     static RACK: RefCell<rack::RackSpec> = RefCell::new(rack::RackSpec::default_chain());
 }
 
-/// Room for the page to write source samples into. Leaked on purpose: the page
-/// owns it for the life of the sound, and there is one of those.
+/// Room for the page to write into, **reused**.
+///
+/// This replaces an `alloc` that called `std::mem::forget` on every request,
+/// on the reasoning that the page owned the buffer for the life of the sound
+/// and there was one of those. There is one *sound*. There were five callers,
+/// and the busiest is the master meter, which asks twenty times a second for a
+/// 16,384-frame stereo window — 128 KB a poll, **2.5 MB a second, 150 MB for
+/// every minute of playback**, in linear memory that can never be given back.
+///
+/// None of it was needed. Every call that takes this pointer copies out of it
+/// before returning — `doc_open` does `.to_vec()`, `meter_json` reads a slice,
+/// the JSON entry points parse into owned values — so nothing on the far side
+/// outlives the call. One buffer, grown to the high-water mark and kept.
+///
+/// The pointer is taken *after* the resize, because growing may move it, and
+/// it is only valid until the next call to this function. Every caller writes
+/// and then immediately hands it back, which is the only pattern it supports.
 #[no_mangle]
-pub extern "C" fn alloc(len: usize) -> *mut f32 {
-    let mut v = vec![0.0f32; len];
-    let p = v.as_mut_ptr();
-    std::mem::forget(v);
-    p
+pub extern "C" fn scratch(len: usize) -> *mut f32 {
+    SCRATCH.with(|s| {
+        let mut b = s.borrow_mut();
+        if b.len() < len {
+            b.resize(len, 0.0);
+        }
+        b.as_mut_ptr()
+    })
 }
 
 

@@ -82,6 +82,17 @@
   function context() {
     if (!audio.ctx) {
       audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      // **The master gain, which the transport has always tried to set and
+      // never had.** `/api/engine/transport` did `bus.gain.value = ...` against
+      // an identifier declared nowhere in this file, so any request carrying a
+      // gain threw a ReferenceError, was caught by the shim's own handler and
+      // returned as a 500 — a volume control that silently failed and took the
+      // seek, loop and play in the same request down with it.
+      //
+      // It lives out here rather than in `start()` because a BufferSource is
+      // built fresh for every play and the gain has to survive them.
+      audio.bus = audio.ctx.createGain();
+      audio.bus.connect(audio.ctx.destination);
     }
     return audio.ctx;
   }
@@ -118,7 +129,7 @@
     const decoded = await context().decodeAudioData(bytes);
     const flat = interleaved(decoded);
 
-    const ptr = e.ex.alloc(flat.length);
+    const ptr = e.ex.scratch(flat.length);
     e.f32().set(flat, ptr >>> 2);
     e.ex.doc_open(ptr, flat.length, 2, decoded.sampleRate);
 
@@ -246,10 +257,17 @@
       const dst = buf.getChannelData(c);
       for (let i = 0; i < play.frames; i++) dst[i] = flat[i * audio.channels + c];
     }
+    // A context built outside a user gesture starts suspended, and a source
+    // started into a suspended context plays nothing while `currentTime` sits
+    // still — so the playhead would not move either, and it would look like the
+    // render had failed rather than like the browser withholding sound. This is
+    // reached from a click on Play, which is a gesture, so the resume is
+    // allowed; it is a no-op once running.
+    if (ctx.state === 'suspended') { try { await ctx.resume(); } catch {} }
     const node = ctx.createBufferSource();
     node.buffer = buf;
     node.loop = play.looping;
-    if (!SILENT) node.connect(ctx.destination);
+    if (!SILENT) node.connect(audio.bus);
     node.start(0, Math.min(play.offset, play.frames - 1) / audio.rate);
     play.node = node;
     play.startedAt = ctx.currentTime;
@@ -369,7 +387,7 @@
         const at = Math.floor(position()) % play.frames;
         const win = scope(at, ch);
         if (!win) return json({ live: false });
-        const ptr = e.ex.alloc(win.length);
+        const ptr = e.ex.scratch(win.length);
         e.f32().set(win, ptr >>> 2);
         const n = e.ex.meter_json(
           ptr, win.length, ch, audio.rate,
@@ -494,7 +512,7 @@
         if (body.p) await open(body.p);
         const e = await engine();
         const text = new TextEncoder().encode(JSON.stringify(body));
-        const ptr = e.ex.alloc((text.length + 3) >> 2);
+        const ptr = e.ex.scratch((text.length + 3) >> 2);
         e.u8().set(text, ptr);
         const out = e.said(e.ex.doc_apply(ptr, text.length));
 
@@ -545,7 +563,10 @@
           if (play.node) await start();
         }
         if (typeof body.gain === 'number' && isFinite(body.gain)) {
-          bus.gain.value = Math.max(0, body.gain);
+          // `context()` for its side effect: the bus is built with the context
+          // and a gain can arrive before anything has been played.
+          context();
+          audio.bus.gain.value = Math.max(0, body.gain);
         }
         if (body.loop && typeof body.loop === 'object') {
           play.looping = !!body.loop.on;
@@ -566,7 +587,7 @@
       case '/api/rack': {
         const e = await engine();
         const text = new TextEncoder().encode(JSON.stringify(body));
-        const ptr = e.ex.alloc((text.length + 3) >> 2);
+        const ptr = e.ex.scratch((text.length + 3) >> 2);
         e.u8().set(text, ptr);
         const out = e.said(e.ex.rack_set(ptr, text.length, audio.rate));
         play.dirty = true;
@@ -585,7 +606,7 @@
       case '/api/rack/param': {
         const e = await engine();
         const text = new TextEncoder().encode(JSON.stringify(body));
-        const ptr = e.ex.alloc((text.length + 3) >> 2);
+        const ptr = e.ex.scratch((text.length + 3) >> 2);
         e.u8().set(text, ptr);
         const out = e.said(e.ex.rack_param(ptr, text.length));
         play.dirty = true;
