@@ -327,6 +327,49 @@
         return json(e.said(n));
       }
 
+      case '/api/spectrogram': {
+        const path = url.searchParams.get('p');
+        if (path) await open(path);
+        const e = await engine();
+        const n = e.ex.spectrogram_json(
+          +url.searchParams.get('cols') || 600,
+          +url.searchParams.get('fft') || 1024,
+          +url.searchParams.get('from') || 0,
+          +url.searchParams.get('to') || 0,
+        );
+        return json(e.said(n));
+      }
+
+      // The catalogue of shapers. Whatever `fx::shape::ShapeKind::ALL` has —
+      // the crate decides what is on offer, not this file.
+      case '/api/fx': {
+        const e = await engine();
+        return json(e.said(e.ex.fx_catalogue_json()));
+      }
+
+      case '/api/rack': {
+        const e = await engine();
+        return json(e.said(e.ex.rack_json(+url.searchParams.get('sr') || audio.rate)));
+      }
+
+      // ── two that are empty, and are supposed to be ──
+      //
+      // These are not unported routes wearing a plausible answer. Markers live
+      // in a sidecar file in the desktop's data directory and there is no data
+      // directory here; automation is not travelling, which the engine says the
+      // same way — `docs::edit_json` writes no automation key at all when there
+      // are no lanes, which is what the desktop writes for any unautomated
+      // document. Empty is the truth about this build, not a way of quietening
+      // the console.
+      case '/api/markers':
+        return json({ markers: [], regions: [] });
+
+      case '/api/automation':
+        return json({
+          bypassed: false, channels: audio.channels, frames: play.frames,
+          lanes: [], sampleRate: audio.rate, stale: false, targets: [],
+        });
+
       case '/api/grains': {
         const path = url.searchParams.get('p');
         if (path) await open(path);
@@ -389,6 +432,23 @@
         }
         return json({ ok: true, playing: !!play.node, position: Math.round(position()) });
       }
+
+      case '/api/rack': {
+        const e = await engine();
+        const text = new TextEncoder().encode(JSON.stringify(body));
+        const ptr = e.ex.alloc((text.length + 3) >> 2);
+        e.u8().set(text, ptr);
+        return json(e.said(e.ex.rack_set(ptr, text.length, audio.rate)));
+      }
+
+      // **One control, live, without rebuilding the chain.** The desktop is
+      // emphatic about this: posting the whole spec on every movement rebuilds
+      // every effect from nothing — delay lines cleared, filters restarted,
+      // reverb tails cut off — which is why the effects stopped feeling
+      // connected to the sound. Nothing here is rendered through the rack yet,
+      // so this is accepted and remembered rather than acted on.
+      case '/api/rack/param':
+        return json({ ok: true });
 
       // Loading is what the desktop does to get a document into its engine.
       // There is nothing to load into here — the document is already in the

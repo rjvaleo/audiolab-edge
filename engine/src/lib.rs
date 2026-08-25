@@ -88,6 +88,15 @@ thread_local! {
     static TEXT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     /// And the last render, likewise.
     static OUT: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
+    /// The effect rack. One, beside the one document.
+    ///
+    /// **`default_chain`, not `empty`.** That is what `racks.get` falls back to
+    /// for a file nobody has touched: an EQ and a compressor, both switched on,
+    /// because a module that arrives bypassed reads as broken — you move a
+    /// control and nothing happens. Both start genuinely inert, so the document
+    /// still renders what it did before the rack existed. Starting empty was my
+    /// choice and it silently changed what a file begins as.
+    static RACK: RefCell<rack::RackSpec> = RefCell::new(rack::RackSpec::default_chain());
 }
 
 /// Room for the page to write source samples into. Leaked on purpose: the page
@@ -473,6 +482,186 @@ pub extern "C" fn grains_json(from: f64, to: f64, cap: usize) -> usize {
         .set("sampleRate", rate as f64)
         .set("outFrames", (frames as f64 * st.ratio as f64).round())
         .set("srcFrames", frames as f64))
+}
+
+// ── samples as a source ──
+//
+// **The adapter the whole rest of the port hangs off.**
+//
+// `Reader::spectrogram` and `edit::render` both take a
+// `Reader<S: RandomAccessSource>`, and that trait is byte-oriented: it is a
+// file, not a buffer of samples. There is no file in a browser.
+//
+// There does not need to be one. `Reader::new(src, info)` takes any source plus
+// a description of what is in it, and `Container::Raw` with `Codec::PcmF32` is
+// exactly "these bytes are the samples". So the decoded audio is handed over as
+// headerless PCM and every reader-shaped thing in the program works on it
+// unchanged — no WAV to assemble, no container to parse, and no second copy of
+// the audio in a different format.
+struct Samples {
+    bytes: Vec<u8>,
+}
+
+impl Samples {
+    fn of(src: &[f32]) -> Self {
+        let mut bytes = Vec::with_capacity(src.len() * 4);
+        for v in src {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        Samples { bytes }
+    }
+}
+
+impl audio_core::RandomAccessSource for Samples {
+    fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> std::io::Result<usize> {
+        let at = (offset as usize).min(self.bytes.len());
+        let n = buf.len().min(self.bytes.len() - at);
+        buf[..n].copy_from_slice(&self.bytes[at..at + n]);
+        Ok(n)
+    }
+    fn len(&self) -> std::io::Result<u64> {
+        Ok(self.bytes.len() as u64)
+    }
+}
+
+fn reader_over(src: &[f32], channels: usize, rate: u32) -> audio_core::Reader<Samples> {
+    let s = Samples::of(src);
+    let info = audio_core::AudioInfo {
+        container: audio_core::Container::Raw,
+        codec: audio_core::Codec::PcmF32,
+        endian: audio_core::Endian::Little,
+        sample_rate: rate,
+        channels: channels.max(1) as u16,
+        bits: 32,
+        data_offset: 0,
+        data_len: (src.len() * 4) as u64,
+    };
+    audio_core::Reader::new(s, info)
+}
+
+/// A spectrogram, in the shape `/api/spectrogram` answers.
+///
+/// **`Reader::spectrogram` itself**, over the sound in memory — the same
+/// transform, the same Hann window, the same 90 dB floor and the same mapping
+/// of magnitude into a byte. Only the base64 is written out, because the
+/// desktop's encoder is a private function in `routes.rs`.
+#[no_mangle]
+pub extern "C" fn spectrogram_json(cols: usize, fft: usize, from: f64, to: f64) -> usize {
+    let (ch, rate) = match DOC.with(|d| {
+        d.borrow().as_ref().map(|l| (l.channels as usize, l.sample_rate))
+    }) {
+        Some(t) => t,
+        None => return error("no document open"),
+    };
+    let buf: Vec<f32> = SRC.with(|s| s.borrow().clone());
+    if buf.is_empty() {
+        return error("no sound open");
+    }
+    let frames = (buf.len() / ch.max(1)) as u64;
+    let start = (from.max(0.0) as u64).min(frames);
+    let count = if to > from { (to as u64).min(frames) - start } else { frames - start };
+
+    let mut r = reader_over(&buf, ch, rate);
+    let Ok(sg) = r.spectrogram(start, count, cols.clamp(1, 2048), fft.clamp(64, 8192)) else {
+        return error("the spectrogram failed");
+    };
+
+    say(&Value::obj()
+        .set("columns", sg.columns as f64)
+        .set("bins", sg.bins as f64)
+        .set("maxHz", sg.max_hz as f64)
+        .set("floorDb", sg.floor_db as f64)
+        .set("from", start as f64)
+        .set("to", (start + count) as f64)
+        .set("data", base64(&sg.data).as_str()))
+}
+
+/// The desktop's encoder is private to `routes.rs`, so this is the one thing
+/// here written out rather than called. Same alphabet, same padding.
+fn base64(bytes: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        out.push(T[(n >> 18) as usize & 63] as char);
+        out.push(T[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { T[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+/// The catalogue of shapers, in the shape `/api/fx` answers.
+///
+/// The content is `fx::shape::ShapeKind::ALL` and each kind's own `specs()`, so
+/// what is offered is whatever the crate has. The loop is written out because
+/// `api_fx_catalogue` returns a `Response`, which is a server type.
+#[no_mangle]
+pub extern "C" fn fx_catalogue_json() -> usize {
+    let kinds: Vec<Value> = fx::shape::ShapeKind::ALL
+        .into_iter()
+        .map(|k| {
+            let params: Vec<Value> = k
+                .specs()
+                .iter()
+                .map(|s| {
+                    Value::obj()
+                        .set("key", s.key)
+                        .set("label", s.label)
+                        .set("min", s.min as f64)
+                        .set("max", s.max as f64)
+                        .set("default", s.default as f64)
+                        .set("log", s.log)
+                        .set("unit", s.unit)
+                })
+                .collect();
+            Value::obj()
+                .set("kind", k.as_str())
+                .set("label", k.label())
+                .set("params", Value::Arr(params))
+        })
+        .collect();
+    say(&Value::obj().set("shapers", Value::Arr(kinds)))
+}
+
+/// The effect rack, in the shape `/api/rack` answers.
+///
+/// `RackSpec::to_json` and `RackSpec::eq_curve` are the desktop's own — `rack.rs`
+/// is one of the files compiled in — so this is the route almost exactly as it
+/// is written there.
+#[no_mangle]
+pub extern "C" fn rack_json(sr: u32) -> usize {
+    RACK.with(|r| {
+        let spec = r.borrow();
+        let curve: Vec<Value> = spec
+            .eq_curve(if sr == 0 { 48_000 } else { sr }, 96)
+            .into_iter()
+            .map(|(f, db)| Value::Arr(vec![Value::Num(f as f64), Value::Num(db as f64)]))
+            .collect();
+        say(&spec.to_json().set("curve", Value::Arr(curve)))
+    })
+}
+
+/// Set the rack from what the interface posted, and answer with it.
+#[no_mangle]
+pub extern "C" fn rack_set(ptr: *const u8, len: usize, sr: u32) -> usize {
+    if ptr.is_null() || len == 0 {
+        return error("no rack given");
+    }
+    let body = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let Ok(text) = std::str::from_utf8(body) else {
+        return error("rack was not text");
+    };
+    let Some(v) = json::parse(text) else {
+        return error("invalid JSON");
+    };
+    RACK.with(|r| *r.borrow_mut() = rack::RackSpec::from_json(&v));
+    rack_json(sr)
 }
 
 /// Render the document's cloud. Returns how many `f32` came out; `out_ptr` says
