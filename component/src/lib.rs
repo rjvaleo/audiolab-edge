@@ -45,8 +45,6 @@ const VIDEO_EXPORT: &str = ui!("video-export.js");
 
 /// The server, in the page.
 const LOCAL_SERVER: &str = include_str!("../../ui/local-server.js");
-/// The bridge from JavaScript into the engine.
-const ENGINE_JS: &str = include_str!("../../ui/engine.js");
 /// The granular engine, built for the browser rather than for WASI. Two
 /// different wasm targets in one deployment, which is the whole architecture in
 /// one line: this one is *served*, not run.
@@ -98,7 +96,6 @@ fn handle(req: Request) -> anyhow::Result<impl IntoResponse> {
         "/video-export.js" => (VIDEO_EXPORT.as_bytes(), mime("js")),
 
         "/local-server.js" => (LOCAL_SERVER.as_bytes(), mime("js")),
-        "/engine.js" => (ENGINE_JS.as_bytes(), mime("js")),
         "/engine.wasm" => (ENGINE_WASM, mime("wasm")),
 
         "/sounds/manifest.json" => (MANIFEST.as_bytes(), mime("json")),
