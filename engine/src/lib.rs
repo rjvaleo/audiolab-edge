@@ -674,13 +674,99 @@ pub extern "C" fn render() -> usize {
         Some(t) => t,
         None => return 0,
     };
-    let out = SRC.with(|s| {
+    let mut out = SRC.with(|s| {
         let src = s.borrow();
         fx::grain::granular(&src, ch, rate, st.ratio, st.semitones, st.window_ms, &st.grain)
     });
+
+    // ── through the rack ──
+    //
+    // **The same two calls `edit::render_fx` makes.** `RackSpec::build` turns
+    // the stored spec into a live `Rack`, `reset` clears the delay lines and
+    // filter state so a render does not begin mid-tail, and `process` runs the
+    // buffer through it. The EQ, the compressor, the shapers and the maximiser
+    // are all in there.
+    //
+    // Without this the rack was stored, serialised, drawn and answered for —
+    // and never applied to a single sample. Every control in the FX tab moved a
+    // number that reached nothing.
+    //
+    // Built per render rather than kept. The desktop keeps one because it is
+    // feeding a real-time callback and cannot afford to allocate on the audio
+    // thread; here a render is a discrete event that already costs a quarter of
+    // a second, and a rack rebuilt from the spec cannot drift from it.
+    RACK.with(|r| {
+        let rack = r.borrow().build(rate, ch);
+        let mut rack = rack;
+        if !rack.is_empty() {
+            rack.reset();
+            rack.process(&mut out, ch, rate);
+        }
+    });
+
     let n = out.len();
     OUT.with(|o| *o.borrow_mut() = out);
     n
+}
+
+/// Move one control on one slot, and answer the way `/api/rack/param` does.
+///
+/// **Not a rebuild.** The desktop is emphatic: posting the whole spec on every
+/// movement builds every effect in the chain again from nothing — delay lines
+/// cleared, filters restarted, reverb tails cut off — and that is why the
+/// effects stopped feeling connected to the sound. So a moving control changes
+/// one number in the spec and nothing else.
+///
+/// `master` is not in `slot_ids`; it has no id because it cannot be added,
+/// removed or reordered. Its live index is the number of spec slots, which is
+/// where `build` puts the maximiser.
+#[no_mangle]
+pub extern "C" fn rack_param(ptr: *const u8, len: usize) -> usize {
+    if ptr.is_null() || len == 0 {
+        return error("no parameter given");
+    }
+    let body = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let Ok(text) = std::str::from_utf8(body) else {
+        return error("parameter was not text");
+    };
+    let Some(v) = json::parse(text) else {
+        return error("invalid JSON");
+    };
+    let Some(id) = v.get("id").and_then(Value::as_str) else {
+        return error("no slot given");
+    };
+    let Some(key) = v.get("key").and_then(Value::as_str) else {
+        return error("no key given");
+    };
+    let value = match v.get("value") {
+        Some(Value::Num(n)) if n.is_finite() => *n as f32,
+        _ => return error("no value given"),
+    };
+
+    let applied = RACK.with(|r| {
+        let mut spec = r.borrow_mut();
+        if id == "master" {
+            // Only `amount` is live on the master, for the reason the desktop
+            // gives: the ceiling is the one guarantee the maximiser makes, and
+            // putting it on a curve would defeat it.
+            if key != "amount" {
+                return None;
+            }
+            let a = value.clamp(0.0, 1.0);
+            spec.master.amount = a;
+            return Some(a);
+        }
+        let slot = spec.slot_ids.iter().position(|x| x == id)?;
+        if spec.set_param(slot, key, value) { Some(value) } else { None }
+    });
+
+    match applied {
+        Some(a) => say(&Value::obj()
+            .set("id", id)
+            .set("key", key)
+            .set("value", a as f64)),
+        None => error("that control is not live"),
+    }
 }
 
 /// Where the last render sits. Only valid until the next one.

@@ -559,6 +559,40 @@
       // Loading is what the desktop does to get a document into its engine.
       // There is nothing to load into here — the document is already in the
       // engine, and the cloud is made from it on demand.
+      // ── the rack ──
+      //
+      // A new chain is a different sound, so the cloud is made again and
+      // resumes where it was — the same rule the grain controls follow.
+      case '/api/rack': {
+        const e = await engine();
+        const text = new TextEncoder().encode(JSON.stringify(body));
+        const ptr = e.ex.alloc((text.length + 3) >> 2);
+        e.u8().set(text, ptr);
+        const out = e.said(e.ex.rack_set(ptr, text.length, audio.rate));
+        play.dirty = true;
+        if (play.node) await start();
+        return json(out);
+      }
+
+      // **One control, without rebuilding the chain.** The desktop is emphatic:
+      // posting the whole spec on every movement builds every effect again from
+      // nothing — delay lines cleared, filters restarted, reverb tails cut off
+      // — which is why the effects stopped feeling connected to the sound. This
+      // changes one number in the spec and nothing else.
+      //
+      // The cloud is made again on release: a drag moves the number, letting go
+      // moves the sound. There is no live engine here for a drag to feed.
+      case '/api/rack/param': {
+        const e = await engine();
+        const text = new TextEncoder().encode(JSON.stringify(body));
+        const ptr = e.ex.alloc((text.length + 3) >> 2);
+        e.u8().set(text, ptr);
+        const out = e.said(e.ex.rack_param(ptr, text.length));
+        play.dirty = true;
+        if (play.node && body.live !== true) await start();
+        return json(out);
+      }
+
       // `engineLoad` reads `sampleRate` off this and keeps it as the device's
       // rate — every frame conversion in the app goes through it, so answering
       // without it silently pins the playhead to a default.
