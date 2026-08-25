@@ -150,6 +150,60 @@
     dirty: true,      // the document moved, so the cloud is stale
   };
 
+  /// The sound just gone, as one window — **wrapping at the loop point.**
+  ///
+  /// A loop has no beginning. Two hundred milliseconds after it turns over, the
+  /// sound that has just been heard is the *end* of the buffer followed by the
+  /// start of it, and a window that stops at frame zero is a window over
+  /// silence that was never played.
+  ///
+  /// Which is what the meter did, and the mechanism is worth naming exactly
+  /// because it is not the obvious one. The window was not empty — it was
+  /// *short*, a hundred frames instead of sixteen thousand. `meter::spectrum`
+  /// returns its floor when it is handed fewer samples than the transform size:
+  ///
+  ///     if n < size { return vec![FLOOR_DB; bands] }
+  ///
+  /// So for the first 16,384 frames of every pass — **341 milliseconds at
+  /// 48 kHz** — every band came back at -120 dB and the terrain drew flat. Live
+  /// was `true` throughout; the numbers were simply the floor. A third of a
+  /// second of nothing, once a loop, in time with the music, which is exactly
+  /// what makes it read as a performance problem rather than as arithmetic.
+  ///
+  /// One scratch buffer, reused. This is asked for twenty times a second and a
+  /// fresh 128 KB each time is a garbage collection every few seconds.
+  let scopeBuf = null;
+
+  function scope(at, ch) {
+    const frames = play.frames;
+    if (!frames) return null;
+    const want = Math.min(SCOPE_FRAMES, frames);
+    if (want < 64) return null;
+
+    const need = want * ch;
+    if (!scopeBuf || scopeBuf.length !== need) scopeBuf = new Float32Array(need);
+
+    // Where the window starts, which may be before the beginning.
+    let from = at - want;
+    if (from >= 0) {
+      scopeBuf.set(play.buffer.subarray(from * ch, at * ch));
+      return scopeBuf;
+    }
+
+    // It does. When looping, the missing part is the tail of the buffer; when
+    // not, there genuinely is nothing there yet and the window is short.
+    if (!play.looping) {
+      const have = at * ch;
+      if (have < ch * 64) return null;
+      return play.buffer.subarray(0, have);
+    }
+    from += frames;
+    const tail = (frames - from) * ch;
+    scopeBuf.set(play.buffer.subarray(from * ch, frames * ch), 0);
+    scopeBuf.set(play.buffer.subarray(0, at * ch), tail);
+    return scopeBuf;
+  }
+
   /// Where the playhead is, in frames of the rendered cloud.
   function position() {
     if (!play.node) return play.offset;
@@ -310,17 +364,15 @@
       // moment, and an FFT of fifty seconds is not a spectrum of now.
       case '/api/engine/master': {
         const e = await engine();
-        if (!play.buffer || !play.node) return json({ live: false });
+        if (!play.buffer || !play.node || !play.frames) return json({ live: false });
         const ch = audio.channels;
-        const at = Math.floor(position());
-        const end = Math.max(0, Math.min(play.frames, at));
-        const from = Math.max(0, end - SCOPE_FRAMES);
-        const slice = play.buffer.subarray(from * ch, end * ch);
-        if (slice.length < ch * 64) return json({ live: false });
-        const ptr = e.ex.alloc(slice.length);
-        e.f32().set(slice, ptr >>> 2);
+        const at = Math.floor(position()) % play.frames;
+        const win = scope(at, ch);
+        if (!win) return json({ live: false });
+        const ptr = e.ex.alloc(win.length);
+        e.f32().set(win, ptr >>> 2);
         const n = e.ex.meter_json(
-          ptr, slice.length, ch, audio.rate,
+          ptr, win.length, ch, audio.rate,
           +url.searchParams.get('fft') || 4096,
           +url.searchParams.get('bands') || 256,
         );
