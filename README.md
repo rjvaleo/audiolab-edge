@@ -98,15 +98,38 @@ picture should not need a sound card to be looked at.
 ### Tests
 
 ```bash
-cd engine && cargo test --release
+cd engine && cargo test --release     # the engine: 624 tests, 28 binaries
+node tools/test-server.mjs            # the port: the component, assets, C ABI
 ```
 
-**624 tests across 28 binaries**, the vendored engine crates' own — the DSP,
-the edit list, the grain envelope, all five stretchers, the rack. They came
-across with the source, at no cost.
+The first is the vendored crates' own — the DSP, the edit list, the grain
+envelope, all five stretchers, the rack. They came across with the source, at no
+cost, and they cover the audio thoroughly. None of them know this is a web
+application.
 
-Nothing yet tests *the port itself* — the fetch shim, the component, or whether
-the sound manifest and the routes agree. That gap is real and named below.
+The second covers what they cannot reach, and its shape follows the shape of the
+bugs this port has actually had:
+
+- **every asset the served page references returns 200** — read out of the HTML
+  at runtime, not from a list, so a new `<script>` is covered the day it lands.
+  This is the check that catches `/vendor/babylon.js`, and it currently fails on
+  exactly that.
+- **every sound in the manifest serves, and its byte count matches** the file
+  that comes back.
+- **the engine instantiates and answers**: all sixteen exports the page calls
+  across the C ABI are present, a document opens, a render produces finite
+  non-silent samples, and the meter returns its bands.
+- **`scratch()` does not leak** — 1,200 calls, a minute of metering at 20 Hz,
+  asserted under 1 MB. The `alloc` it replaced would have leaked 150 MB.
+- **no route that used to be answered has stopped being answered**, against a
+  baseline generated from the shim itself.
+
+It builds, serves on a port nobody is using, and tears the server down after —
+so running it never disturbs whatever you have open. **It never opens a browser,
+which means it cannot make a sound.**
+
+Still uncovered: `ui/local-server.js` runs in a page and needs a DOM and Web
+Audio to be exercised honestly. Faking those in Node would test the fake.
 
 ---
 

@@ -37,7 +37,7 @@ const flag = (f) => process.argv.includes(f);
 // makes. A path is taken literally up to the first `?` or template hole; a
 // route built out of a variable is reported as the prefix it is built from,
 // which is enough to see whether the shim has a case for it.
-function asked() {
+export function asked() {
   const found = new Map(); // path -> Set of "file:line"
   for (const rel of ['ui/port/app.js', 'ui/port/video-export.js', 'ui/port/first-sound.js',
                      'ui/port/rail.js', 'ui/port/stage.js', 'ui/port/room3d.js']) {
@@ -81,7 +81,7 @@ function asked() {
 //
 // `case '/api/x':` in the switch, plus any `startsWith('/api/x')` guard for the
 // routes that carry an id in the path.
-function answered() {
+export function answered() {
   const text = readFileSync(join(ROOT, 'ui/local-server.js'), 'utf8');
   const set = new Set();
   for (const m of text.matchAll(/case\s+[`'"](\/api\/[^`'"]*)[`'"]\s*:/g)) set.add(m[1]);
@@ -96,6 +96,18 @@ function answered() {
   }
   return set;
 }
+
+// ── the command line ─────────────────────────────────────────────────────────
+//
+// Guarded, because `tools/test-server.mjs` imports `answered()` to check that a
+// route which used to be answered still is. Without this, importing the module
+// would print a table and then call process.exit in the middle of the tests.
+const invokedDirectly = process.argv[1] &&
+  fileURLToPath(import.meta.url) === process.argv[1];
+
+if (invokedDirectly) main();
+
+function main() {
 
 const want = asked();
 const have = answered();
@@ -127,3 +139,5 @@ console.log(`${want.size} routes called, ${want.size - missing.length} answered,
 if (missing.length && !flag('--all')) console.log('--all to see the answered ones too.');
 console.log();
 process.exit(0);
+
+}
