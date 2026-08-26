@@ -79,10 +79,6 @@
     { icon: '⌕', label: 'Search', panel: 'search' },
     { icon: '◴', label: 'Scan', panel: 'scan', disk: true },
     { icon: '⌂', label: 'Folder', panel: 'import', disk: true },
-    // **No disk needed any more.** The desktop's record writes a WAV to the
-    // library; this one opens the browser's microphone and hands the take
-    // straight to the player, so it travels after all.
-    { icon: '●', label: 'Record', panel: 'record' },
   ];
 
   /// **There is no disk in a browser.** Scanning a library, choosing its folder
@@ -126,6 +122,10 @@
   /// sub-items keep their glyphs; they are smaller and they are not
   /// destinations.
   const SVGS = {
+    // A record button is a filled circle. Nothing else, because anything else
+    // is not a record button.
+    record:
+      '<circle cx="12" cy="12" r="6.5" fill="currentColor" stroke="none"/>',
     grain:
       '<path d="M7.6 18.5h9.2a3.4 3.4 0 0 0 .35-6.78 5.35 5.35 0 0 0-10.03-2.3 4.1 4.1 0 0 0 .48 9.08z"/><circle cx="9.6" cy="13.4" r=".85" fill="currentColor" stroke="none"/><circle cx="13" cy="11.9" r=".85" fill="currentColor" stroke="none"/><circle cx="15.4" cy="14.6" r=".85" fill="currentColor" stroke="none"/><circle cx="11.7" cy="15.6" r=".85" fill="currentColor" stroke="none"/>',
     visual:
@@ -196,6 +196,32 @@
       rail.append(sub);
     }
 
+    // ── record ──────────────────────────────────────────────────────────
+    //
+    // **Not one of the four, and not hidden under Browse.**
+    //
+    // It was a child of Browse, which meant it only existed while Browse was
+    // lit — invisible from Grain, which is where you land and where you would
+    // want it. And the only record-looking control on screen was the
+    // transport's `#recBtn`, which captures *what is playing* rather than the
+    // microphone, in the same grey as everything else. Two record buttons,
+    // neither findable, and nothing red.
+    //
+    // So it sits on its own, under a rule, below the four destinations. It is
+    // an action rather than a place — it opens a window and gives it back —
+    // and the separation says so. Red, because a record button is red.
+    const recRow = el('div', 'rl-actions');
+    const recBtn = el('button', 'rl-item rl-rec');
+    recBtn.type = 'button';
+    recBtn.id = 'railRecord';
+    recBtn.title = 'Record from the microphone';
+    recBtn.append(icon('record'), label('Record'));
+    recBtn.onclick = () => {
+      if (typeof openRecordModal === 'function') openRecordModal();
+    };
+    recRow.append(recBtn);
+    rail.append(recRow);
+
     rail.append(el('div', 'rl-spacer'));
 
     // The handle. At the bottom and under a rule, because it is the one control
@@ -224,7 +250,10 @@
     // So the rail keeps its own mark, `.rl-on`, and there is exactly one. The
     // app's `.active` is left alone; it is still true, it just is not the
     // question this column is answering.
-    const items = () => [...rail.querySelectorAll('.rl-item')];
+    // The four destinations. Record carries `.rl-item` for its shape and its
+    // spacing, but it is an action — it never lights, and `current()` must
+    // never land on it.
+    const items = () => [...rail.querySelectorAll('.rl-item:not(.rl-rec)')];
 
     /// **Where you are, worked out — not remembered.**
     ///
@@ -352,6 +381,7 @@
     rail.addEventListener('click', (e) => {
       const item = e.target.closest('.rl-item');
       if (!item || !rail.contains(item)) return;
+      if (item.classList.contains('rl-rec')) return; // its own handler
       e.stopPropagation();
       e.preventDefault();
 
@@ -365,18 +395,6 @@
         return;
       }
       if (go(item)) sync();
-    }, true);
-
-    // **Record opens a window, not a tray.** It is a `.rail-btn` like the
-    // other library children, so `app.js` would otherwise `showPane` it into
-    // the left panel — which is where its markup used to live and no longer
-    // does. Caught here and sent to the modal instead.
-    rail.addEventListener('click', (e) => {
-      const child = e.target.closest('.rl-child[data-panel="record"]');
-      if (!child || !rail.contains(child)) return;
-      e.stopPropagation();
-      e.preventDefault();
-      if (typeof openRecordModal === 'function') openRecordModal();
     }, true);
 
     // Browse's children follow Browse.

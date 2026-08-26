@@ -195,3 +195,22 @@
 #leftRail.rl.open .rl-toggle .rl-lb { opacity: 1; }
 #leftRail .rl-toggle:hover { background: var(--surface-3); color: var(--text-2); }
 #leftRail .rl-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* ── record ─────────────────────────────────────────────────────────────────
+   An action, not a destination: its own row under a rule, so the four above it
+   stay one kind of thing. Red because a record button is red — and it is the
+   only red in this column, which is what makes it findable from across the
+   window. */
+#leftRail .rl-actions {
+  border-top: 1px solid var(--line);
+  margin-top: 6px;
+  padding-top: 6px;
+}
+#leftRail .rl-item.rl-rec { color: var(--rec-red, #e0503f); }
+#leftRail .rl-item.rl-rec:hover {
+  color: var(--rec-hot, #ff6a55);
+  background: color-mix(in srgb, var(--rec-red, #e0503f) 12%, transparent);
+}
+/* It never lights the way a destination does — it opens a window and gives it
+   back, so there is nothing for it to be "current" for. */
+#leftRail .rl-item.rl-rec.rl-on { background: none; }
