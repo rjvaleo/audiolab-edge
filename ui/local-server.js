@@ -439,6 +439,116 @@
     return scopeBuf;
   }
 
+  // ── presets ─────────────────────────────────────────────────────────────
+  //
+  // **The desktop's file, in localStorage.** `persist.rs` defines a preset as
+  // `{name, note, path, stretch, rack}` and its file as a map of name to
+  // preset. The same shape is stored here, and it is byte-identical rather than
+  // merely similar because the two fields that carry any structure —
+  // `stretch` and `rack` — come from the very serialisers `Preset::to_json`
+  // calls: `persist::stretch_to_json` by way of `doc_json`, and
+  // `RackSpec::to_json` by way of `rack_json`.
+  //
+  // So a preset made here opens on the desktop. That is the file contract in
+  // `docs/EDGE-PARITY.md`, and it is the reason to assemble a preset out of the
+  // engine's own answers rather than out of whatever the sliders happen to say.
+  //
+  // localStorage rather than memory: a preset you lose on reload is not a
+  // preset. Per-visitor and on their own machine — nothing is shared, the same
+  // as a take.
+  const PRESET_KEY = 'audiolab.edge.presets';
+
+  function presetsRead() {
+    try {
+      const raw = localStorage.getItem(PRESET_KEY);
+      const map = raw ? JSON.parse(raw) : {};
+      return map && typeof map === 'object' ? map : {};
+    } catch { return {}; }
+  }
+
+  function presetsWrite(map) {
+    try { localStorage.setItem(PRESET_KEY, JSON.stringify(map, null, 1)); }
+    catch (e) { console.warn('[local-server] presets could not be stored:', e); }
+  }
+
+  /// The list the panel renders, in the order the desktop lists them: by name.
+  const presetsList = () => {
+    const map = presetsRead();
+    return Object.keys(map).sort((a, b) => a.localeCompare(b)).map((k) => map[k]);
+  };
+
+  const presetsReply = () => json({ presets: presetsList() });
+
+  /// The document's settings, as a preset holds them.
+  async function presetFromDocument(name, note, path) {
+    const e = await engine();
+    const doc = e.said(e.ex.doc_json());
+    const rack = e.said(e.ex.rack_json(audio.rate));
+    return {
+      name,
+      note: note || '',
+      // The sound it was captured from, library-relative — read on "apply with
+      // sound" and empty on a preset that predates the idea.
+      path: path || audio.path || '',
+      stretch: doc.stretch || {},
+      rack,
+    };
+  }
+
+  /// Put a preset's settings onto the open document.
+  async function presetApply(preset, withSound) {
+    const e = await engine();
+
+    if (withSound && preset.path && preset.path !== audio.path) {
+      // The preset brings its own file. `open` throws if the sound is not in
+      // this build, which is the honest answer — a preset made on the desktop
+      // can name a sound that never shipped here.
+      await open(preset.path);
+    }
+
+    if (preset.stretch && Object.keys(preset.stretch).length) {
+      const spec = JSON.stringify({ ...preset.stretch, op: 'stretch' });
+      const t = new TextEncoder().encode(spec);
+      const ptr = e.ex.scratch((t.length + 3) >> 2);
+      e.u8().set(t, ptr);
+      e.ex.doc_apply(ptr, t.length);
+    }
+
+    if (preset.rack) {
+      const spec = JSON.stringify(preset.rack);
+      const t = new TextEncoder().encode(spec);
+      const ptr = e.ex.scratch((t.length + 3) >> 2);
+      e.u8().set(t, ptr);
+      e.ex.rack_set(ptr, t.length, audio.rate);
+      RACK_SLOTS.n = (preset.rack.slots || []).length;
+    }
+
+    // A different chain and a different stretch are a different sound.
+    play.dirty = true;
+    if (play.node) await start();
+
+    // `applied` becomes `state.edit`, so this answers with the document —
+    // the same shape `/api/edit` returns — and carries `path` so the interface
+    // knows which sound it is now looking at.
+    const doc = e.said(e.ex.doc_json());
+    return { ...doc, path: audio.path };
+  }
+
+  /// The whole preset file, for moving to the desktop.
+  ///
+  /// `~/…/data/presets.json` over there is exactly this map, so what this saves
+  /// can be dropped in beside the desktop's own. There is no button for it —
+  /// the interface has no idea this build has nowhere to write — so it is on
+  /// `window` and one call from the console.
+  window.savePresetsFile = () => {
+    const map = presetsRead();
+    const n = Object.keys(map).length;
+    if (!n) { console.warn('no presets to save'); return 0; }
+    handOver(new TextEncoder().encode(JSON.stringify(map, null, 1)),
+             'presets.json', 'application/json');
+    return n;
+  };
+
   // ── exporting the sound ─────────────────────────────────────────────────
   //
   // **The desktop's own AIFF writer, into memory instead of onto a disk.**
@@ -910,6 +1020,10 @@
       // Polled ten times a second while the modal is open. `wave` is this
       // build's own addition to the shape: the desktop's panel has a level
       // meter and no scope, and the modal here draws what is going in.
+      // Every preset, by name. Read once at startup and after every change.
+      case '/api/presets':
+        return presetsReply();
+
       // The export's progress. Asked once at startup — an export left running
       // when the page was reloaded is still running, and this is how the bar
       // finds out — and then every 250 ms while one is going.
@@ -1224,6 +1338,73 @@
       // is the `a` of the *loop range*. So every press of play fell through to
       // "not ported" and nothing made a sound, while calling the route by hand
       // with the shape I had invented worked perfectly.
+      // Capture the document's settings under a name.
+      case '/api/presets': {
+        const name = (body.name || '').trim();
+        if (!name) return json({ error: 'a preset needs a name' }, 400);
+        const map = presetsRead();
+        map[name] = await presetFromDocument(name, body.note, body.p);
+        presetsWrite(map);
+        return presetsReply();
+      }
+
+      // Put one onto the open document. Answers with the document, because
+      // that is what the caller assigns to `state.edit`.
+      case '/api/presets/apply': {
+        const map = presetsRead();
+        const preset = map[body.name];
+        if (!preset) return json({ error: `no preset called ${body.name}` }, 404);
+        try {
+          return json(await presetApply(preset, !!body.withSound));
+        } catch (e) {
+          return json({ error: (e && e.message) || String(e) }, 400);
+        }
+      }
+
+      // Rename and edit in one act, which is what the manager's Save does.
+      case '/api/presets/update': {
+        const map = presetsRead();
+        const from = body.name;
+        const to = (body.to || '').trim();
+        if (!map[from]) return json({ error: `no preset called ${from}` }, 404);
+        if (!to) return json({ error: 'a preset needs a name' }, 400);
+        if (to !== from && map[to]) return json({ error: `“${to}” already exists` }, 409);
+
+        const next = { ...map[from], name: to, note: body.note || '' };
+        if (body.stretch) next.stretch = body.stretch;
+        if (body.rack) next.rack = body.rack;
+        delete map[from];
+        map[to] = next;
+        presetsWrite(map);
+        return presetsReply();
+      }
+
+      // A copy, made from the draft rather than from what is stored, so edits
+      // can be taken without committing them to the original.
+      case '/api/presets/duplicate': {
+        const name = (body.name || '').trim();
+        if (!name) return json({ error: 'a preset needs a name' }, 400);
+        const map = presetsRead();
+        if (map[name]) return json({ error: `“${name}” already exists` }, 409);
+        map[name] = {
+          name,
+          note: body.note || '',
+          path: audio.path || '',
+          stretch: body.stretch || {},
+          rack: body.rack || null,
+        };
+        presetsWrite(map);
+        return presetsReply();
+      }
+
+      case '/api/presets/delete': {
+        const map = presetsRead();
+        if (!map[body.name]) return json({ error: `no preset called ${body.name}` }, 404);
+        delete map[body.name];
+        presetsWrite(map);
+        return presetsReply();
+      }
+
       // Start it and answer at once. The outcome arrives through
       // `GET /api/export`, which is also where the progress comes from — the
       // desktop's comment says a four-minute file took twenty-five seconds and
