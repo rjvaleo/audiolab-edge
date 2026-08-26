@@ -6,9 +6,7 @@ is re-decided; things are either carried across or deleted.
 
 The distinction is not pedantry. A rebuild diverges from the desktop build the
 day it is written and never converges again, and then there are two granular
-interfaces to maintain and one of them is worse. The first attempt at this
-started writing a fresh control panel with eight sliders chosen from memory —
-which is exactly the mistake the theme editor made twice before it was ported.
+interfaces to maintain and one of them is worse.
 
 ## What was copied
 

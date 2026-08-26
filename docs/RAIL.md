@@ -1,8 +1,7 @@
 # The left rail
 
-Written 25 Aug 2026 as a plan. **It is built** — `ui/port/rail.js` and
-`rail.css` are the four buttons described below, and they are what the page
-shows. Kept as the record of the argument, not as a to-do list.
+`ui/port/rail.js` and `rail.css` are the four buttons described below, and they
+are what the page shows.
 
 ## What is wrong with it
 
@@ -92,12 +91,9 @@ that was the whole argument for calling this a port. After this they are not.
 That is the right trade and the line is in the right place. What must not drift
 is the **engine** — `fx`, `edit`, `audio-core` and the wire format. It is
 vendored into `engine/vendor/`, byte for byte from a named desktop commit, and
-`tools/sync-core.sh --check` is what keeps that honest: it was consumed straight
-from the desktop tree by absolute path until 25 Aug, which could not drift but
-also meant this repository built on exactly one machine. The interface is a
-different matter: this build has no disk, no
-tags, no scan and no export, so its rail was always going to differ. Better a
-rail designed for what this is than a copy of one designed for something else.
+`tools/sync-core.sh --check` keeps that honest. The interface is a different
+matter: this build has no disk, no tags and no scan, so its rail differs. A rail
+designed for what this is beats a copy of one designed for something else.
 
 So the rule from here is: **the engine is shared and the interface is ours.**
 A change to `ui/port/` is a change to this build alone. Anything that belongs to

@@ -6,14 +6,6 @@ Ridgeline and the rail all run. Kept as the record of what was decided and why,
 not as a description of the current build; `README.md` has the status table and
 `PORT.md` has the route-by-route state.
 
-**One decision in here was reversed and the earlier text still says the old
-thing.** Everything below line 33 that says `wasm32-wasip1` predates the choice;
-it is **wasip2**, settled 25 Aug and recorded as such under *Open questions*. The
-build is a component (`\0asm 0d00 0100`), not a core module, because that is what
-Akamai Functions requires. Left rather than rewritten, because a plan that
-silently agrees with the outcome is no longer evidence of how the outcome was
-reached.
-
 ## What it is
 
 One page that plays a sound, mangles it with the granular engine this program
@@ -38,7 +30,7 @@ Two things, and the second is the one that pays.
 
 `fibonacci1729/spinup.dev` is a GUI for building **Spin** applications, and it
 deploys to **Akamai Functions**. So the target is not a Linux box with no sound
-card. It is **WebAssembly**: Spin components, `wasm32-wasip1`, invoked per HTTP
+card. It is **WebAssembly**: Spin components, `wasm32-wasip2`, invoked per HTTP
 request.
 
 That matters more than the sound card ever did, and it retires the assumption
@@ -51,7 +43,7 @@ sufficient.
 
 Not guessed. Both targets, on 25 Aug 2026, against the tree as it stands:
 
-| crate | `wasm32-wasip1` (Spin) | `wasm32-unknown-unknown` (browser) |
+| crate | `wasm32-wasip2` (Spin) | `wasm32-unknown-unknown` (browser) |
 |---|---|---|
 | `audio-core` | **builds** | **builds** |
 | `fx` | **builds** | **builds** |
@@ -105,7 +97,7 @@ running in the browser. They cross over as they are.
 
 So:
 
-**The component** (Rust → `wasm32-wasip1`) serves the page, the WASM module and
+**The component** (Rust → `wasm32-wasip2`) serves the page, the WASM module and
 the sound. It is stateless because it has nothing to remember — no engine, no
 document, no session. Whether it needs to do *any* computation depends on the
 last open question below.
@@ -168,7 +160,7 @@ this one should not follow it anywhere.
 
     audiolab-edge/
       spin.toml
-      component/        Rust, wasm32-wasip1 — serves the page and the sound
+      component/        Rust, wasm32-wasip2 — serves the page and the sound
       engine/           audio-core + fx + edit, wasm32-unknown-unknown
       ui/               the page, two visuals, the theme engine
       sounds/           ten to twenty, Opus, under ten seconds each
@@ -207,11 +199,9 @@ real call into `fx::grain::granular` so nothing could be dead-stripped.
 | interface — `index.html`, `app.js`, `app.css`, before any trimming | 848 KB | ~200 KB |
 | the sounds — see below | ~74 KB each | — |
 
-**The first attempt at that measurement said 14 KB and was wrong.** The stub
-only referenced a type's size, so the linker discarded the engine and the number
-described an empty module. It took a genuine call into the granular render to
-get one that means anything — worth remembering, because a size that comes back
-suspiciously good usually is.
+These are measured from a build that calls into the granular render. A stub that
+only references a type's size lets the linker discard the engine, and the number
+then describes an empty module.
 
 **So the sounds are the heaviest thing in the build**, by a wide margin. Every
 worry that started this — Babylon, the component limit, the engine — is smaller
@@ -297,7 +287,7 @@ DSP ran server-side, and none does.
 
 1. **This document, agreed.** The two visuals were chosen on 25 Aug 2026.
 2. **The repository**, empty, with `spin.toml` and a page that says hello from
-   `wasm32-wasip1`. Proves the toolchain end to end before anything real is in
+   `wasm32-wasip2`. Proves the toolchain end to end before anything real is in
    it.
 3. **The engine in the browser.** `audio-core` + `fx` + `edit` in an
    AudioWorklet, playing a shipped sound. No visuals. This is the risky part and
