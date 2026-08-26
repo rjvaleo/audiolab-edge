@@ -87,9 +87,14 @@ thread_local! {
     /// The sound the document is made of, interleaved, as it came from
     /// `decodeAudioData`.
     static SRC: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
-    /// The document. One, because there is one sound open at a time — which is
-    /// as true on the desktop as it is here.
-    static DOC: RefCell<Option<edit::EditList>> = const { RefCell::new(None) };
+    /// The document, and its history. One, because there is one sound open at a
+    /// time — which is as true on the desktop as it is here.
+    ///
+    /// **A `Session`, not a bare `EditList`.** History is what makes an edit
+    /// safe to try: `Session` keeps a stack of whole documents, so undo cannot
+    /// drift out of step with the thing it undoes. It is also what `edit_json`
+    /// reports as `canUndo`/`canRedo`, which is what enables the buttons.
+    static DOC: RefCell<Option<edit::Session>> = const { RefCell::new(None) };
     /// Where the last answer is kept until the page copies it.
     static TEXT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     /// And the last render, likewise.
@@ -107,6 +112,14 @@ thread_local! {
     /// still renders what it did before the rack existed. Starting empty was my
     /// choice and it silently changed what a file begins as.
     static RACK: RefCell<rack::RackSpec> = RefCell::new(rack::RackSpec::default_chain());
+}
+
+/// Read something off the open document, if there is one.
+///
+/// Nine call sites want a field or two off the `EditList`; going through the
+/// `Session` at each of them would be nine places to get the borrow wrong.
+fn with_doc<T>(f: impl FnOnce(&edit::EditList) -> T) -> Option<T> {
+    DOC.with(|d| d.borrow().as_ref().map(|s| f(s.list())))
 }
 
 /// Room for the page to write into, **reused**.
@@ -157,11 +170,7 @@ pub extern "C" fn scratch(len: usize) -> *mut f32 {
 /// says so rather than being left as an unexplained empty closure.
 #[no_mangle]
 pub extern "C" fn export_aiff(bits: u32) -> usize {
-    let (ch, rate, st) = match DOC.with(|d| {
-        d.borrow()
-            .as_ref()
-            .map(|l| (l.channels as usize, l.sample_rate, l.stretch))
-    }) {
+    let (ch, rate, st) = match with_doc(|l| (l.channels as usize, l.sample_rate, l.stretch)) {
         Some(t) => t,
         None => return error("no document is open"),
     };
@@ -255,7 +264,7 @@ pub extern "C" fn doc_open(input: *const f32, len: usize, channels: usize, rate:
     let frames = (src.len() / ch) as u64;
     SRC.with(|s| *s.borrow_mut() = src);
     let list = edit::EditList::identity(frames, ch as u16, rate.max(1));
-    DOC.with(|d| *d.borrow_mut() = Some(list));
+    DOC.with(|d| *d.borrow_mut() = Some(edit::Session::new(list)));
     doc_json()
 }
 
@@ -266,7 +275,9 @@ pub extern "C" fn doc_open(input: *const f32, len: usize, channels: usize, rate:
 #[no_mangle]
 pub extern "C" fn doc_json() -> usize {
     DOC.with(|d| match d.borrow().as_ref() {
-        Some(l) => say(&docs::edit_json(l, false, false)),
+        // `canUndo` and `canRedo` are what enable the buttons. They were
+        // hardcoded false, so Undo and Redo were permanently greyed out.
+        Some(sess) => say(&docs::edit_json(sess.list(), sess.can_undo(), sess.can_redo())),
         None => error("no document open"),
     })
 }
@@ -289,17 +300,75 @@ pub extern "C" fn doc_apply(ptr: *const u8, len: usize) -> usize {
     };
     let op = v.get("op").and_then(|o| o.as_str()).unwrap_or("");
 
+    // The selection the toolbar operates on, in frames of the pre-stretch
+    // timeline — which is what `EditList` addresses. Invariant 7 on the desktop.
+    // `json::Value` carries numbers as `Value::Num(f64)` and offers no
+    // accessor for them, so they are matched.
+    let frames_at = |k: &str| -> u64 {
+        match v.get(k) {
+            Some(Value::Num(n)) if n.is_finite() && *n > 0.0 => *n as u64,
+            _ => 0,
+        }
+    };
+    let span = || {
+        let a = frames_at("start");
+        let b = frames_at("end");
+        edit::Range::new(a.min(b), a.max(b))
+    };
+
+    // Two shapes, and the desktop's own mapping: anything that is not
+    // `linear` is equal power, which is the right default because two linear
+    // fades sum to a dip in the middle.
+    let shape = if v.get("shape").and_then(Value::as_str) == Some("linear") {
+        edit::FadeShape::Linear
+    } else {
+        edit::FadeShape::EqualPower
+    };
+
     let done = DOC.with(|d| {
         let mut d = d.borrow_mut();
-        let Some(list) = d.as_mut() else { return false };
+        let Some(sess) = d.as_mut() else { return false };
         match op {
             // **The whole panel, every time.** The desktop posts every control
             // on the stretch tray with each change, and `stretch_from_json` is
             // the function that already read it.
+            //
+            // Through `apply` like everything else, because `Session` exposes
+            // no other way in. Its stack is capped at 200 documents, so a drag
+            // that posts on every movement trims itself.
             "stretch" => {
-                list.stretch = persist::stretch_from_json(&v);
+                let next = persist::stretch_from_json(&v);
+                sess.apply(|l| l.stretch = next)
+            }
+
+            // ── the toolbar ──
+            //
+            // Every one of these is `EditList`'s own method, through
+            // `Session::apply` so it lands on the undo stack. Same calls
+            // `routes.rs` makes, in the same order, with the same arguments —
+            // which is why an edit made here and an edit made on the desktop
+            // produce the same document.
+            "cut" => sess.apply(|l| l.cut(span())),
+            "crop" => sess.apply(|l| l.crop(span())),
+            "silence" => sess.apply(|l| l.silence(span())),
+            "reverse" => sess.apply(|l| l.reverse(span())),
+            "fadeIn" => {
+                let n = frames_at("frames");
+                sess.apply(|l| l.fade_in(span(), n, shape))
+            }
+            "fadeOut" => {
+                let n = frames_at("frames");
+                sess.apply(|l| l.fade_out(span(), n, shape))
+            }
+
+            // ── history ──
+            "undo" => sess.undo(),
+            "redo" => sess.redo(),
+            "revert" => {
+                sess.revert();
                 true
             }
+
             _ => false,
         }
     });
@@ -328,8 +397,8 @@ pub extern "C" fn doc_apply(ptr: *const u8, len: usize) -> usize {
 /// with no weight in it.
 #[no_mangle]
 pub extern "C" fn peaks_json(cols: usize, from: f64, to: f64) -> usize {
-    let channels = DOC.with(|d| d.borrow().as_ref().map(|l| l.channels as usize).unwrap_or(2)).max(1);
-    let rate = DOC.with(|d| d.borrow().as_ref().map(|l| l.sample_rate).unwrap_or(48_000));
+    let channels = with_doc(|l| l.channels as usize).unwrap_or(2).max(1);
+    let rate = with_doc(|l| l.sample_rate).unwrap_or(48_000);
 
     // Copied out rather than borrowed across the measuring closure. Both live
     // in a `RefCell`, and `say` at the end of it would want the same borrow.
@@ -487,10 +556,8 @@ pub extern "C" fn meter_json(
 #[no_mangle]
 pub extern "C" fn grains_json(from: f64, to: f64, cap: usize) -> usize {
     let (from, to) = (from.max(0.0) as u64, to.max(0.0) as u64);
-    let Some((ch, rate, st, frames)) = DOC.with(|d| {
-        d.borrow()
-            .as_ref()
-            .map(|l| (l.channels as usize, l.sample_rate, l.stretch, l.base_frames()))
+    let Some((ch, rate, st, frames)) = with_doc(|l| {
+        (l.channels as usize, l.sample_rate, l.stretch, l.base_frames())
     }) else {
         return error("no document open");
     };
@@ -646,9 +713,7 @@ fn reader_over(src: &[f32], channels: usize, rate: u32) -> audio_core::Reader<Sa
 /// desktop's encoder is a private function in `routes.rs`.
 #[no_mangle]
 pub extern "C" fn spectrogram_json(cols: usize, fft: usize, from: f64, to: f64) -> usize {
-    let (ch, rate) = match DOC.with(|d| {
-        d.borrow().as_ref().map(|l| (l.channels as usize, l.sample_rate))
-    }) {
+    let (ch, rate) = match with_doc(|l| (l.channels as usize, l.sample_rate)) {
         Some(t) => t,
         None => return error("no document open"),
     };
@@ -767,9 +832,7 @@ pub extern "C" fn rack_set(ptr: *const u8, len: usize, sr: u32) -> usize {
 /// where.
 #[no_mangle]
 pub extern "C" fn render() -> usize {
-    let (ch, rate, st) = match DOC.with(|d| {
-        d.borrow().as_ref().map(|l| (l.channels as usize, l.sample_rate, l.stretch))
-    }) {
+    let (ch, rate, st) = match with_doc(|l| (l.channels as usize, l.sample_rate, l.stretch)) {
         Some(t) => t,
         None => return 0,
     };
