@@ -139,7 +139,6 @@ button { font-family: inherit; cursor: pointer; }
 .panel {
   flex-shrink: 0; background: var(--surface-2);
   display: flex; flex-direction: column; overflow: hidden;
-  transition: width .18s ease;
   position: relative;
 }
 /* The width is a custom property so that `.panel.collapsed` can still win.
@@ -1234,7 +1233,15 @@ body.docmode .panel.left {
   position: absolute; top: 44px; bottom: 0; left: var(--rail); z-index: 30;
   box-shadow: 12px 0 40px var(--shadow);
   border-right: 1px solid var(--line-2);
-  transform: translateX(0); transition: transform .18s ease, width .18s ease;
+  transform: translateX(0);
+  /* **Slides open, slides shut, and swaps instantly.**
+     Only `transform` is animated. Opening from closed moves it from
+     -100% to 0, which is the slide. Clicking a different rail item while
+     it is already open changes neither the transform nor the width, so
+     the new panel simply appears — nothing to animate. Width is
+     deliberately not in this list: two panes of different widths would
+     otherwise slide sideways on a swap. */
+  transition: transform .18s ease;
 }
 body.docmode .panel.left.drawer-closed {
   /* Its own width plus the rail: translateX(-100%) alone leaves the panel's

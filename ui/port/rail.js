@@ -223,41 +223,73 @@
       items().forEach((b) => b.classList.toggle('rl-on', b === now));
     };
 
+    // ── the tray each destination owns ──────────────────────────────────────
+    //
+    // **All four behave the same.** Every destination has its own controls and
+    // they are already in the page — they were simply never wired to the rail:
+    //
+    //   Grain   `#dock`        the stretch, splice, scan and shape controls
+    //   Visual  `.room-edit`   the room editor — layers, streams, colour
+    //   Theme   `#leftPanel`   showing `paneTheme`
+    //   Browse  `#leftPanel`   showing `paneBrowse`, and the only place sound
+    //                          files appear
+    //
+    // The left panel opens and shuts by class; the dock and the room editor by
+    // `.hidden`. Two mechanisms, so this says which one a destination uses
+    // rather than assuming.
+    const tray = (item) => {
+      if (item.dataset.panel || item.dataset.mode === 'overview') {
+        return document.getElementById('leftPanel');
+      }
+      if (item.dataset.mode === 'edit') return document.getElementById('dock');
+      // Whichever editor the current visual owns — Room, Ridgeline and the rest
+      // each have their own, and `setMode` decides which.
+      return document.querySelector('.room-edit:not(.hidden)') ||
+             document.getElementById('roomEdit');
+    };
+
+    const trayOpen = (item) => {
+      const t = tray(item);
+      if (!t) return false;
+      if (t.id === 'leftPanel') {
+        return !(t.classList.contains('collapsed') || t.classList.contains('drawer-closed'));
+      }
+      return !t.classList.contains('hidden');
+    };
+
+    const shutTray = (item) => {
+      const t = tray(item);
+      if (!t) return;
+      if (t.id === 'leftPanel') closeDrawer();
+      else t.classList.add('hidden');
+    };
+
+    const openTray = (item) => {
+      const t = tray(item);
+      if (!t) return;
+      if (t.id === 'leftPanel') openDrawer();
+      else t.classList.remove('hidden');
+    };
+
     // ── going somewhere ─────────────────────────────────────────────────────
     //
-    // **One rule: the button you press is the space you get, and nothing else
-    // comes with it.**
+    // **The button you press is the space you get, and nothing else comes with
+    // it.** This file used to do half the job — let `app.js` change the mode,
+    // then force the drawer open on top of wherever you landed. Two faults
+    // followed and both were reported as "the nav doesn't work":
     //
-    // This file used to do half the job — let `app.js` change the mode, then
-    // force the drawer open on top of wherever you landed. Two faults followed
-    // from that and both were reported as "the nav doesn't work":
+    //   * Visual put you in the Room and opened the *file list* over it in a
+    //     330px drawer, because the drawer still held whatever pane was last
+    //     shown. The room is the entire point of that button.
+    //   * Grain and Browse never closed the Theme editor, because `setMode`
+    //     has no opinion about panes. You left Theme and Theme stayed.
     //
-    //   * Pressing Visual put you in the Room and opened the *file list* over
-    //     it in a 330px drawer, because the drawer still held whatever pane was
-    //     last shown. The Room is the whole point of that button and you could
-    //     not see it.
-    //   * Pressing Grain or Browse never closed the Theme editor, because
-    //     `setMode` has no opinion about panes. You left Theme and Theme
-    //     stayed, lit and on screen.
-    //
-    // So the rail does the whole transition itself. Each destination states its
-    // three facts — which mode, which pane, and whether the panel is on screen
-    // at all — and every other destination's state is therefore off. There is
-    // nowhere for the previous space to survive.
-    //
-    // Grain and Visual show **no panel**. Sound files belong to Browse and
-    // nowhere else; the theme editor belongs to Theme and nowhere else. The
-    // pane is still reset to `browse` before the panel is hidden, so that a
-    // panel opened later by any other route cannot come back holding Theme.
+    // So the rail does the whole transition: which mode, which pane, and which
+    // tray is on screen. Every other destination's tray is shut by the same
+    // act, so there is nowhere for the previous space to survive.
     const go = (item) => {
       const mode = item.dataset.mode;
       const pane = item.dataset.panel;
-
-      if (pane === 'theme') {
-        showPane('left', 'theme');
-        openDrawer();
-        return true;
-      }
 
       // `app.js`'s own guard, kept: Grain with nothing open has nothing to
       // show, and it says so rather than arriving empty.
@@ -266,31 +298,40 @@
         return false;
       }
 
-      setMode(mode);
+      // Shut everything first, so a swap cannot leave two trays open.
+      items().forEach((b) => { if (b !== item) shutTray(b); });
 
-      if (mode === 'overview') {
-        // The library, and the one place sound files appear.
-        showPane('left', 'browse');
-        openDrawer();
+      if (pane === 'theme') {
+        showPane('left', 'theme');
       } else {
-        // Grain and Visual get the whole width. Reset the pane first so the
-        // panel is not left holding Theme, then take it off screen.
-        showPane('left', 'browse');
-        closeDrawer();
+        setMode(mode);
+        // Reset the pane before showing, so the panel can never come back
+        // holding Theme, and so sound files stay in Browse.
+        if (mode === 'overview') showPane('left', 'browse');
       }
+      openTray(item);
       return true;
     };
 
     // Capture, and stop there. `app.js` binds its own `onclick` to these same
-    // buttons — `setMode` on `.mode-btn`, `showPane` on `.rail-btn` — and those
-    // handlers each know about half the transition. Letting them also run is
-    // what produced a Room with the file list over it. `go()` calls both
-    // functions itself, in the right order, with the panel state decided.
+    // buttons — `setMode` on `.mode-btn`, `showPane` on `.rail-btn` — and each
+    // knows about half the transition. Letting them also run is what produced a
+    // Room with the file list over it.
     rail.addEventListener('click', (e) => {
       const item = e.target.closest('.rl-item');
       if (!item || !rail.contains(item)) return;
       e.stopPropagation();
       e.preventDefault();
+
+      // **Once to open, once to close.** Clicking the space you are already in
+      // shuts its tray. Clicking a different one goes there, and the previous
+      // tray is gone in the same act — which is why a swap looks instant while
+      // opening from nothing slides.
+      if (item === current() && trayOpen(item)) {
+        shutTray(item);
+        sync();
+        return;
+      }
       if (go(item)) sync();
     }, true);
 
