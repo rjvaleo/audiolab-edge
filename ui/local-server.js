@@ -439,6 +439,83 @@
     return scopeBuf;
   }
 
+  // ── markers and regions ─────────────────────────────────────────────────
+  //
+  // Kept per sound, in localStorage, because a marker you lose on reload is
+  // not a marker. The desktop keeps them in a sidecar beside the file; there is
+  // no file here to sit beside, so the sound's path is the key.
+  //
+  // `/api/markers` is a whole-object save: the interface posts `{markers,
+  // regions}` and takes back what was stored. `/api/annot` is the operations
+  // that need something more than a replace.
+  const ANNOT_KEY = 'audiolab.edge.annotations';
+
+  const annotAll = () => {
+    try { return JSON.parse(localStorage.getItem(ANNOT_KEY) || '{}') || {}; }
+    catch { return {}; }
+  };
+  const annotFor = (path) => {
+    const a = annotAll()[path];
+    return { markers: a?.markers || [], regions: a?.regions || [] };
+  };
+  const annotSave = (path, value) => {
+    const all = annotAll();
+    all[path] = { markers: value.markers || [], regions: value.regions || [] };
+    try { localStorage.setItem(ANNOT_KEY, JSON.stringify(all)); }
+    catch (e) { console.warn('[local-server] annotations could not be stored:', e); }
+    return all[path];
+  };
+
+  // ── measuring ───────────────────────────────────────────────────────────
+  //
+  // Peak, RMS and the rest, over a Float32Array. Plain arithmetic rather than a
+  // trip through the engine: these are aggregates of samples, not a file format,
+  // so there is nothing here that has to match the desktop byte for byte.
+  function measureSpan(flat, ch, from, to) {
+    const a = Math.max(0, Math.min(from | 0, (flat.length / ch) | 0));
+    const b = Math.max(a, Math.min(to | 0, (flat.length / ch) | 0));
+    if (b <= a) return null;
+
+    let peak = 0, peakFrame = a, sum = 0, clipped = 0;
+    let sumL = 0, sumR = 0, sumLR = 0, sqL = 0, sqR = 0;
+    let sameLR = ch > 1;
+
+    for (let f = a; f < b; f++) {
+      for (let c = 0; c < ch; c++) {
+        const v = flat[f * ch + c];
+        const m = Math.abs(v);
+        if (m > peak) { peak = m; peakFrame = f; }
+        if (m >= 0.999) clipped++;
+        sum += v * v;
+      }
+      if (ch > 1) {
+        const l = flat[f * ch], r = flat[f * ch + 1];
+        if (sameLR && Math.abs(l - r) > 1e-6) sameLR = false;
+        sumL += l; sumR += r; sumLR += l * r; sqL += l * l; sqR += r * r;
+      }
+    }
+
+    const n = (b - a) * ch;
+    const rms = Math.sqrt(sum / Math.max(1, n));
+    const db = (v) => (v > 0 ? 20 * Math.log10(v) : -Infinity);
+
+    // Pearson between the channels, which is what a correlation meter shows:
+    // +1 in phase, 0 unrelated, -1 inverted.
+    let correlation = null;
+    if (ch > 1) {
+      const den = Math.sqrt(sqL * sqR);
+      correlation = den > 1e-12 ? sumLR / den : 0;
+    }
+
+    return {
+      peak, peakFrame, rms, clipped,
+      peakDb: db(peak), rmsDb: db(rms),
+      dualMono: sameLR,
+      correlation,
+      frames: b - a,
+    };
+  }
+
   // ── presets ─────────────────────────────────────────────────────────────
   //
   // **The desktop's file, in localStorage.** `persist.rs` defines a preset as
@@ -1196,8 +1273,44 @@
       // are no lanes, which is what the desktop writes for any unautomated
       // document. Empty is the truth about this build, not a way of quietening
       // the console.
+      // What has been marked on this sound. Empty is a real answer.
       case '/api/markers':
-        return json({ markers: [], regions: [] });
+        return json(annotFor(url.searchParams.get('p') || audio.path || ''));
+
+      // The scale table, straight out of `fx::tuning` — the same 83 the desktop
+      // offers, so a document that names one means the same thing in both.
+      case '/api/scales': {
+        const e = await engine();
+        return json(e.said(e.ex.scales_json()));
+      }
+
+      // What the overview says about the file: the source as it was decoded,
+      // before any edit or effect.
+      case '/api/stats': {
+        const path = url.searchParams.get('p');
+        if (path) { try { await open(path); } catch { /* answered below */ } }
+        if (!audio.buffer) return json({ error: 'no sound open' }, 404);
+
+        const ch = audio.channels;
+        const flat = interleaved(audio.buffer);
+        const m = measureSpan(flat, ch, 0, audio.buffer.length);
+        if (!m) return json({ error: 'nothing to measure' }, 404);
+
+        const it = (await sounds()).find((f) => f.path === (path || audio.path));
+        return json({
+          peakDbfs: m.peakDb,
+          rmsDbfs: m.rmsDb,
+          sampleRate: audio.rate,
+          // What it was decoded to, not what it was stored as. Opus has no bit
+          // depth; the browser hands over floats.
+          bits: it?.bits || 32,
+          channels: audio.buffer.numberOfChannels,
+          frames: audio.buffer.length,
+          correlation: m.correlation,
+          dualMono: m.dualMono,
+          clipped: m.clipped,
+        });
+      }
 
       case '/api/automation':
         return json({
@@ -1338,6 +1451,91 @@
       // is the `a` of the *loop range*. So every press of play fell through to
       // "not ported" and nothing made a sound, while calling the route by hand
       // with the shape I had invented worked perfectly.
+      // The whole set, replaced. The interface keeps its own copy and posts it
+      // after every change, which is the desktop's shape too.
+      case '/api/markers':
+        return json(annotSave(body.p || audio.path || '', body));
+
+      // Operations that need more than a replace.
+      case '/api/annot': {
+        const path = body.p || audio.path || '';
+        const a = annotFor(path);
+        const frames = play.frames || 0;
+
+        switch (body.op) {
+          // Each marker becomes a region running to the next one, and the last
+          // to the end. The way a set of cue points becomes a set of slices.
+          case 'markersToRegions': {
+            const ms = [...a.markers].sort((x, y) => x.frame - y.frame);
+            a.regions = ms.map((m, i) => ({
+              start: m.frame,
+              end: i + 1 < ms.length ? ms[i + 1].frame : frames,
+              label: m.label || `r${i + 1}`,
+            })).filter((r) => r.end > r.start);
+            break;
+          }
+
+          case 'splitRegion': {
+            const pos = Math.round(body.pos || 0);
+            const out = [];
+            for (const r of a.regions) {
+              if (pos > r.start && pos < r.end) {
+                out.push({ ...r, end: pos },
+                         { ...r, start: pos, label: `${r.label || 'r'} b` });
+              } else out.push(r);
+            }
+            a.regions = out;
+            break;
+          }
+
+          // Move everything by a signed number of frames, clamped so nothing
+          // walks off the front.
+          case 'nudge': {
+            const by = Math.round(body.frames || 0);
+            const clamp = (v) => Math.max(0, Math.min(frames || v, v));
+            a.markers = a.markers.map((m) => ({ ...m, frame: clamp(m.frame + by) }));
+            a.regions = a.regions.map((r) => ({
+              ...r, start: clamp(r.start + by), end: clamp(r.end + by),
+            }));
+            break;
+          }
+
+          case 'deleteMarkers':
+            a.markers = [];
+            break;
+
+          default:
+            return json({ error: `not ported: annot op ${body.op}` }, 501);
+        }
+
+        return json(annotSave(path, a));
+      }
+
+      // Peak and RMS of the **rendered** output, rack and all — which is the
+      // rule the desktop's normalise follows, because measuring a level that
+      // ignored a rack boost would clip the export.
+      case '/api/measure': {
+        if (body.p) { try { await open(body.p); } catch { /* answered below */ } }
+        const flat = await cloud();
+        if (!flat || !flat.length) return json({ error: 'nothing to measure' }, 404);
+
+        const ch = audio.channels;
+        const total = Math.floor(flat.length / ch);
+        // Zero to zero means the whole thing, the same as everywhere else.
+        const from = Math.max(0, Math.round(body.start || 0));
+        const to = body.end ? Math.min(total, Math.round(body.end)) : total;
+
+        const m = measureSpan(flat, ch, from, to);
+        if (!m) return json({ error: 'nothing to measure' }, 404);
+        return json({
+          peakDb: m.peakDb,
+          rmsDb: m.rmsDb,
+          peakFrame: m.peakFrame,
+          frames: m.frames,
+          clipped: m.clipped,
+        });
+      }
+
       // Capture the document's settings under a name.
       case '/api/presets': {
         const name = (body.name || '').trim();

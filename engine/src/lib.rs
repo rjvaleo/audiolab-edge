@@ -212,6 +212,47 @@ pub extern "C" fn export_aiff(bits: u32) -> usize {
     }
 }
 
+/// The scale table, grouped for a menu.
+///
+/// **`api_scales` from `routes.rs`, unchanged.** `fx::tuning::SCALES` is
+/// vendored, so this is the same 83 scales the desktop offers with the same
+/// cents, and a document that names one means the same thing in both builds.
+///
+/// Grouped in the order the table declares them: the categories run from the
+/// familiar to the far away, and sorting them alphabetically would shuffle that
+/// into nonsense.
+#[no_mangle]
+pub extern "C" fn scales_json() -> usize {
+    use std::collections::BTreeMap;
+    let mut order: Vec<&str> = Vec::new();
+    let mut by: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
+    for sc in fx::tuning::SCALES {
+        if !order.contains(&sc.cat) {
+            order.push(sc.cat);
+        }
+        by.entry(sc.cat).or_default().push(
+            Value::obj()
+                .set("name", sc.name)
+                .set("info", sc.info)
+                .set("degrees", sc.cents.len() as f64)
+                .set("span", sc.span() as f64)
+                .set(
+                    "cents",
+                    Value::Arr(sc.cents.iter().map(|c| Value::Num(*c as f64)).collect()),
+                ),
+        );
+    }
+    let groups: Vec<Value> = order
+        .into_iter()
+        .map(|cat| {
+            Value::obj()
+                .set("category", cat)
+                .set("scales", Value::Arr(by.remove(cat).unwrap_or_default()))
+        })
+        .collect();
+    say(&Value::obj().set("groups", Value::Arr(groups)))
+}
+
 /// Where the last export is, until the page copies it out.
 #[no_mangle]
 pub extern "C" fn bytes_ptr() -> *const u8 {
