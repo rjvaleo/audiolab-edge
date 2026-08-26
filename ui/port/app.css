@@ -1234,14 +1234,10 @@ body.docmode .panel.left {
   box-shadow: 12px 0 40px var(--shadow);
   border-right: 1px solid var(--line-2);
   transform: translateX(0);
-  /* **Slides open, slides shut, and swaps instantly.**
-     Only `transform` is animated. Opening from closed moves it from
-     -100% to 0, which is the slide. Clicking a different rail item while
-     it is already open changes neither the transform nor the width, so
-     the new panel simply appears — nothing to animate. Width is
-     deliberately not in this list: two panes of different widths would
-     otherwise slide sideways on a swap. */
-  transition: transform .18s ease;
+  /* **No slide.** The tray is there or it is not. `transform` was animated so
+     that opening from closed swept in from the left; asked for it to stop, and
+     the width transition on `.panel` went with it for the same reason. Nothing
+     about the panel is animated now. */
 }
 body.docmode .panel.left.drawer-closed {
   /* Its own width plus the rail: translateX(-100%) alone leaves the panel's
