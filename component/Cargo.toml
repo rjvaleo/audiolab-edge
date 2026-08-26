@@ -9,6 +9,10 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
+# Gzip, both ends: `build.rs` compresses every text asset at build time and the
+# component decompresses for the rare client that does not accept gzip.
+# Pure-Rust backend, so it compiles for wasm32-wasip2 with nothing to configure.
+flate2 = "1"
 anyhow = "1"
 spin-sdk = "3"
 
@@ -19,3 +23,6 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[build-dependencies]
+flate2 = "1"

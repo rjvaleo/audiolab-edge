@@ -4,11 +4,12 @@
 plays a short sound, mangles it with a real granular engine compiled to
 WebAssembly, and draws one big thing while it does.
 
+[![build](https://github.com/rjvaleo/audiolab-edge/actions/workflows/ci.yml/badge.svg)](https://github.com/rjvaleo/audiolab-edge/actions/workflows/ci.yml)
 [![Akamai Functions](https://img.shields.io/badge/deploys%20to-Akamai%20Functions-FF6600?style=flat-square)](https://techdocs.akamai.com/)
 [![Spin](https://img.shields.io/badge/Spin-4.0.2-04B4C7?style=flat-square)](https://spinframework.dev)
 [![wasm32-wasip2](https://img.shields.io/badge/wasm32--wasip2-component%20model-654FF0?style=flat-square&logo=webassembly&logoColor=white)](https://component-model.bytecodealliance.org/)
 [![Rust](https://img.shields.io/badge/Rust-2021-000000?style=flat-square&logo=rust)](https://www.rust-lang.org/)
-[![component](https://img.shields.io/badge/component-1.99%20MB-blue?style=flat-square)](#what-it-weighs)
+[![component](https://img.shields.io/badge/component-2.5%20MB-blue?style=flat-square)](#what-it-weighs)
 [![engine tests](https://img.shields.io/badge/engine%20tests-624%20passing-success?style=flat-square)](#tests)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue?style=flat-square)](#license)
 
@@ -188,11 +189,9 @@ four-button rail.
 
 | | |
 |---|---|
-| **12 visuals are dead** | `/vendor/babylon.js` was never copied from the desktop. Kills Surfaces, Stage and the ten grain arrangements. It is a **decision, not an oversight** — babylon is 7.9 MB against a 1.99 MB component. |
 | **26 of 48 routes unanswered** | Presets, export, video, stats, measure. `node tools/port-status.mjs` prints the list. Roughly half the remainder — scan, library, tagging, recording — are features that legitimately do not travel. |
 | **the toolbar is mostly inert** | `doc_apply` implements one operation, `stretch`. Cut, crop, fade, reverse, undo and export all answer 501. |
 | **the stretch tray opens on WSOLA** | while `render()` unconditionally calls `granular` and ignores `stretch.algorithm`. |
-| **nothing is compressed** | see below. |
 
 ### Not an AudioWorklet, and that turned out to be right
 
@@ -228,21 +227,30 @@ SIMD and nothing tuned. There is no argument for rendering on the server.
 
 Measured 25 Aug 2026 with `stat`, on the build in this repository.
 
-| | bytes |
-|---|---|
-| **the component, deployable** | **2,085,236** |
-| — the granular engine, `wasm32-unknown-unknown` | 348,862 |
-| — `app.js` | 644,901 |
-| — `app.css` | 167,136 |
-| — `index.html` | 56,685 |
-| — one sound, Opus 96k | 45,262 |
+**Everything text is stored gzipped**, compressed by `build.rs` at build time
+and served with `content-encoding: gzip`. This component *is* the web server —
+nothing sits in front of it to do that, and it is a CDN.
 
-**Nothing is compressed.** The component sets no `content-encoding`, so a cold
-visit transfers about 1.8 MB. `gzip -9` on the three text assets alone takes
-868,722 → 256,915 — a 3.4:1 saving nobody is taking. Spin's own
-`spin-fileserver` component has brotli and gzip compiled in; embedding the
-assets in our own component is precisely what costs us this, and revisiting that
-trade is open.
+| | raw | as stored |
+|---|---|---|
+| 25 embedded assets | 10,225,801 | **2,441,946** (4.2×) |
+| — `babylon.js` | 8,258,950 | 1,775,012 |
+| — the granular engine | 348,862 | 128,899 |
+| — `app.js` | 644,901 | 198,307 |
+| — one sound, Opus 96k | 45,262 | 45,262 (already compressed) |
+| **the component, deployable** | | **2,646,209** |
+
+A cold visit transfers **2,435,997 bytes** and delivers **10,169,116** worth of
+assets.
+
+Compression is what made babylon affordable. Raw, it would have taken the
+component past 10 MB and twelve visuals stayed dead rather than pay it;
+gzipped it costs 530 KB of component and the question stopped being
+interesting.
+
+A client that does not send `accept-encoding: gzip` — `curl` without
+`--compressed` — is served the decompressed bytes instead, so nothing has to
+know this is happening. `vary: accept-encoding` is set.
 
 ---
 

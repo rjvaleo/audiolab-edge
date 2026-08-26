@@ -1,0 +1,89 @@
+name: build
+
+# **The point is to build it somewhere that is not the author's laptop.**
+#
+# This repository built on exactly one machine in the world until 25 Aug 2026 —
+# seven absolute paths into a home directory — and nothing would have told
+# anybody. Vendoring fixed it; this is what keeps it fixed. A green run here is
+# the claim the README makes on the reader's behalf: clone it and it builds.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust, and both targets
+        # Two, and they are not interchangeable: the engine runs in the browser
+        # (`wasm32-unknown-unknown`, reached over a C ABI) and the component runs
+        # on Spin (`wasm32-wasip2`, a component rather than a core module).
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup target add wasm32-wasip2 wasm32-unknown-unknown
+          rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            engine
+            component
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Spin
+        run: |
+          curl -fsSL https://developer.fermyon.com/downloads/install.sh | bash
+          sudo mv ./spin /usr/local/bin/spin
+          spin --version
+
+      - name: The engine's own tests
+        # 624 across 28 binaries — the DSP, the edit list, the grain envelope,
+        # all five stretchers, the rack. Vendored from the desktop build, so
+        # this is also the check that the vendored copy still compiles alone.
+        run: cargo test --release --workspace
+        working-directory: engine
+
+      - name: Build
+        # Builds the engine first and then the component that embeds it, which
+        # is what `spin build` is configured to do. Fails here if a path is
+        # absolute, if an asset named in build.rs is missing, or if the
+        # vendored crates need something this checkout does not have.
+        run: spin build
+
+      - name: The component is a component
+        # Not a core module. Akamai Functions is a component platform, and the
+        # difference is four bytes nobody looks at: `0d00 0100` against
+        # `0100 0000`. Worth asserting rather than assuming.
+        run: |
+          W=component/target/wasm32-wasip2/release/audiolab_edge.wasm
+          test -f "$W" || { echo "no component built"; exit 1; }
+          head -c 8 "$W" | xxd
+          head -c 8 "$W" | xxd -p | grep -q '^0061736d0d000100' \
+            || { echo "not a component — wrong wasm layer version"; exit 1; }
+          ls -l "$W"
+
+      - name: The port's own tests
+        # The assets the page asks for, the sounds against their manifest, the
+        # engine across the C ABI, and no route that used to be answered having
+        # quietly stopped. Starts its own server on a free port and kills it;
+        # never opens a browser, so it cannot make a sound.
+        run: node tools/test-server.mjs
+
+      - name: Routes still unported
+        # Informational, never fails. The web build lagging the desktop is
+        # normal — see docs/EDGE-PARITY.md in the desktop repository.
+        run: node tools/port-status.mjs || true
