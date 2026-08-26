@@ -11,16 +11,16 @@ to differ. This is not.
 | | |
 |---|---|
 | repository | https://github.com/rjvaleo/__Audio-Edit---Tag |
-| commit | `eebb0ecb6d5817cd642783a79648ed13c09f6c15` |
-| | The badge says what CI did, not what it is supposed to do |
-| dated | 2026-08-25T10:43:13-06:00 |
+| commit | `5576223751f96dd818317d7bfa36a5c9f519b44e` |
+| | The no-alloc test counts its own thread, not the whole process |
+| dated | 2026-08-26T16:20:53-06:00 |
 
 ## What is here
 
 | path | from | files | lines |
 |---|---|---|---|
 | `audio-core/` | `core/crates/audio-core/` | 17 | 3501 |
-| `fx/` | `core/crates/fx/` | 38 | 19910 |
+| `fx/` | `core/crates/fx/` | 38 | 19943 |
 | `edit/` | `core/crates/edit/` | 7 | 4293 |
 | `wire/json.rs` | `core/crates/server/src/json.rs` | 1 | 443 |
 | `wire/rack.rs` | `core/crates/server/src/rack.rs` | 1 | 884 |

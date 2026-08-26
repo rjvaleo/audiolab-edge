@@ -10,24 +10,56 @@
 //! exactly one test here. Two would race each other's measurements and the
 //! result would depend on how many threads cargo happened to use — a test that
 //! passes or fails for reasons unrelated to what it is testing.
+//!
+//! For the same reason the count is taken **on the measuring thread only**. A
+//! `GlobalAlloc` sees every allocation in the process, and libtest runs the
+//! test on a worker while its own threads carry on doing bookkeeping. Those
+//! allocations landed in the middle of a measured loop and were charged to the
+//! renderer: on a busy CI runner this read four allocations across two hundred
+//! blocks and failed, with the same code passing on the run before and the two
+//! after. The gate is a `const`-initialised thread-local `Cell<bool>`, which
+//! neither allocates on first access nor panics while thread-locals are being
+//! destroyed.
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct Counting;
 
 static ALLOCS: AtomicUsize = AtomicUsize::new(0);
 
+thread_local! {
+    /// Whether allocations on this thread are the ones being measured.
+    static COUNTING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Count from here on, on this thread. Called once, by the test.
+fn count_this_thread() {
+    COUNTING.with(|c| c.set(true));
+}
+
+#[inline]
+fn counting() -> bool {
+    // `try_with` rather than `with`: during thread-local destruction the value
+    // is gone, and an allocation at that moment must not panic.
+    COUNTING.try_with(Cell::get).unwrap_or(false)
+}
+
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
-        ALLOCS.fetch_add(1, Ordering::Relaxed);
+        if counting() {
+            ALLOCS.fetch_add(1, Ordering::Relaxed);
+        }
         System.alloc(l)
     }
     unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
         System.dealloc(p, l)
     }
     unsafe fn realloc(&self, p: *mut u8, l: Layout, n: usize) -> *mut u8 {
-        ALLOCS.fetch_add(1, Ordering::Relaxed);
+        if counting() {
+            ALLOCS.fetch_add(1, Ordering::Relaxed);
+        }
         System.realloc(p, l, n)
     }
 }
@@ -60,6 +92,7 @@ fn source(channels: usize) -> Vec<f32> {
 
 #[test]
 fn the_streaming_engines_never_allocate_once_they_are_built() {
+    count_this_thread();
     steady_state();
     controls_moving();
     the_vocoder();
