@@ -720,6 +720,12 @@ body.resizing-lane { cursor: ns-resize; user-select: none; }
 .dock { flex-direction: row; }
 .dock-rail { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
 .dock-panes { flex: 1; min-width: 0; display: flex; }
+/* **Nothing in here may be unreachable.** The effects panel is taller than the
+   dock's default and the dock sits flush with the bottom of the window, so
+   anything past the fold had no way to be scrolled to — it simply was not
+   there. `fitDockTo` gives it the room on a normal window; this is what happens
+   on a short one. */
+.dock-panes > * { overflow-y: auto; }
 .dock-tab {
   height: 24px; padding: 0 9px; border-radius: 6px;
   border: 1px solid transparent; background: transparent; color: var(--text-dim);

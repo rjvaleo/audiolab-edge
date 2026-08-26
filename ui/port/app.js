@@ -3282,6 +3282,14 @@ document.querySelectorAll('.dock-tab').forEach((t) => {
     // panel being opened is showing whatever was on it when it was last
     // closed. Paint it once here; the polls take it from there.
     if (t.dataset.dock === 'effects') {
+      // **Tall enough to be seen.** An FX module is a graph, a readout, a row
+      // of shape buttons and four sliders — about 300px. The dock opens at 150,
+      // so the EQ curve ran off the bottom of the window, and there is no
+      // scroll to reach it: the panel drew correctly and was invisible.
+      //
+      // Only ever grows, and only to what the window allows — `dockLimits`
+      // keeps the lane above it. A dock already dragged taller is left alone.
+      fitDockTo(DOCK_FX_MIN);
       paintRackMeters(engine.rackLevels || []);
       repaintVisualEqs();
       repaintVisualCompressors();
@@ -3304,6 +3312,21 @@ document.querySelectorAll('.dock-tab').forEach((t) => {
 const DOCK_MIN = 150;
 /// Leave enough of the waveform to still be a waveform.
 const LANE_MIN = 170;
+
+/// What the effects panel needs before any of it is legible.
+const DOCK_FX_MIN = 340;
+
+/// Grow the dock to `px` if it is shorter, and not otherwise.
+///
+/// Remembered like a drag, because a panel that springs back to unusable every
+/// time you leave it is worse than one that never grew.
+function fitDockTo(px) {
+  const dock = $('dock');
+  if (!dock) return;
+  if (dock.getBoundingClientRect().height >= px) return;
+  setDockHeight(px);
+  requestAnimationFrame(() => { repaintVisualEqs(); repaintVisualCompressors(); });
+}
 
 function dockLimits() {
   const dock = $('dock');
@@ -3931,7 +3954,7 @@ function drawVisualChamberlin(canvas,p){
   const w=canvas.clientWidth,h=canvas.clientHeight;if(!w||!h)return;const d=devicePixelRatio||1;canvas.width=w*d;canvas.height=h*d;
   const c=canvas.getContext('2d');c.setTransform(d,0,0,d,0,0);const xf=hz=>Math.log(hz/20)/Math.log(1000)*w,yf=db=>h/2-db/36*h;
   c.fillStyle='#090b0d';c.fillRect(0,0,w,h);c.strokeStyle='rgba(255,255,255,.1)';for(const hz of [20,100,1000,10000,20000]){const x=xf(hz);c.beginPath();c.moveTo(x,0);c.lineTo(x,h);c.stroke();}c.beginPath();c.moveTo(0,yf(0));c.lineTo(w,yf(0));c.stroke();
-  if(engine.spectrum?.length){const bins=engine.spectrum,nyquist=(engine.deviceRate||48000)/2;c.beginPath();c.moveTo(0,h);for(let i=1;i<bins.length;i++){const hz=i/(bins.length-1)*nyquist;if(hz>=20&&hz<=20000)c.lineTo(xf(hz),h-bins[i]/255*h*.9);}c.lineTo(w,h);c.closePath();c.fillStyle='rgba(52,137,202,.18)';c.fill();}
+  if(engine.spectrum?.length){const bins=engine.spectrum,nyquist=(engine.deviceRate||48000)/2;c.beginPath();c.moveTo(0,h);for(let i=1;i<bins.length;i++){const hz=i/(bins.length-1)*nyquist;if(hz>=20&&hz<=20000)c.lineTo(xf(hz),h-bins[i]/255*h*.9);}c.lineTo(w,h);c.closePath();c.fillStyle='rgba(52,137,202,.42)';c.fill();}
   const filters=['low','band','high','notch'];for(const [index,key] of filters.entries()){const freq=p[key+'Freq'],q=p[key+'Q'],amp=p[key+'Amp'];if(amp<=.001)continue;const response=hz=>key==='low'?-10*Math.log10(1+Math.pow(hz/freq,4)):key==='high'?-10*Math.log10(1+Math.pow(freq/hz,4)):key==='band'?-18*Math.pow(Math.log(hz/freq)*q,2):-18*Math.exp(-Math.pow(Math.log(hz/freq)*q,2)*4);const pts=[];for(let x=0;x<=w;x+=2){const hz=20*Math.pow(1000,x/w);pts.push([x,yf(response(hz)*amp)]);}c.beginPath();c.moveTo(0,yf(0));pts.forEach(([x,y])=>c.lineTo(x,y));c.lineTo(w,yf(0));c.closePath();c.globalAlpha=.2;c.fillStyle=CHAMBERLIN_COLORS[key];c.fill();c.globalAlpha=1;c.beginPath();pts.forEach(([x,y],i)=>i?c.lineTo(x,y):c.moveTo(x,y));c.strokeStyle=CHAMBERLIN_COLORS[key];c.stroke();const nx=xf(freq),ny=h*(.84-Math.min(1,q/10)*.66);c.beginPath();c.arc(nx,ny,8,0,Math.PI*2);c.fillStyle=CHAMBERLIN_COLORS[key];c.fill();c.fillStyle='#20252a';c.textAlign='center';c.textBaseline='middle';c.font='bold 9px sans-serif';c.fillText(String(index+1),nx,ny);}
   c.textAlign='right';c.textBaseline='alphabetic';c.fillStyle='rgba(93,184,245,.7)';c.font='8px ui-monospace';c.fillText('POST FILTER',w-4,10);
 }
@@ -4045,7 +4068,7 @@ function drawVisualEq(canvas, slot, selected) {
       ctx.lineTo(xFor(hz), h - bins[i] / 255 * h * .92);
     }
     ctx.lineTo(w, h); ctx.closePath();
-    ctx.fillStyle = 'rgba(52,137,202,.26)'; ctx.fill();
+    ctx.fillStyle = 'rgba(52,137,202,.45)'; ctx.fill();
     ctx.strokeStyle = 'rgba(93,184,245,.72)'; ctx.lineWidth = 1; ctx.stroke();
   }
   const bands=slot.bands||defaultEqBands();

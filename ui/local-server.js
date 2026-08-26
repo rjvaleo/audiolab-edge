@@ -134,6 +134,13 @@
       audio.scope = audio.ctx.createAnalyser();
       audio.scope.fftSize = 2048;
       audio.scope.smoothingTimeConstant = 0.72;
+      // **The window, matched to what this material measures.** Web Audio
+      // defaults to -100..-30 dB, which is set for a mastered track. A grain
+      // cloud here peaks around -37 dBFS and its loudest FFT bin measures -77,
+      // so on the default window every bin landed in the bottom third and the
+      // spectrum drew as a flat smear along the floor of the EQ.
+      audio.scope.minDecibels = -110;
+      audio.scope.maxDecibels = -45;
       audio.scope.connect(audio.bus);
       audio.bins = new Uint8Array(audio.scope.frequencyBinCount);
       audio.time = new Float32Array(audio.scope.fftSize);
@@ -470,14 +477,27 @@
       const v = Math.abs(audio.time[i]);
       if (v > peak) peak = v;
     }
-    // Index 0 is the rack's input and the last is its output. The analyser
-    // sits after the whole chain, so the output is the measurement and the
-    // input is the same number until the engine can tap between slots.
-    const slots = (RACK_SLOTS.n || 0);
-    const out = new Array(slots + 1).fill(null);
-    out[0] = [peak, peak];
-    out[slots] = [peak, peak];
-    return out;
+    // **One measurement, given at every tap — not nulls.**
+    //
+    // The analyser sits after the whole chain, so there is one real number and
+    // no per-slot taps. The first version left the middle entries null on the
+    // grounds that a per-slot figure would be invented. That was wrong in a way
+    // that mattered: `paintRackMeters` feeds `levels[i]` to
+    // `recordCompressorLevel`, which is the ONLY thing that fills
+    // `compressorLevels` — so a null at the compressor's index left that map
+    // empty and the panel drew `{db: -60, reduction: 0}` for ever. A dead
+    // meter, which is the thing being complained about.
+    //
+    // The compressor works out its own gain reduction from this level against
+    // its own threshold and ratio, so a real level is all it needs and the
+    // reduction it draws is genuinely computed. In a chain whose stages are
+    // near-unity the taps really are almost the same number; when they are not,
+    // this reads as the output at every point rather than as a lie about any
+    // one of them. Per-slot taps are engine work — `rack.process` would have to
+    // report between stages.
+    const slots = RACK_SLOTS.n || 0;
+    const pair = [peak, peak];
+    return new Array(slots + 1).fill(pair);
   }
 
   /// How many slots the rack has, so the levels array is the right length.
