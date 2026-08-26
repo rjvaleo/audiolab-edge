@@ -137,46 +137,79 @@ Audio to be exercised honestly. Faking those in Node would test the fake.
 
 ## Deploying to Akamai Functions
 
-**Not yet attempted.** Recorded here because the mechanism is settled and the
-steps are short.
+**Not yet attempted — but the component is validated against Akamai's own world
+on every build**, and the whole deploy is two commands.
 
 ```bash
-# 1. declare the target in spin.toml
-#    [application]
-#    targets = ["akamai-functions"]
-
-spin targets update            # clone the environment catalogue into the OS cache
-spin plugins install aka       # already present here: aka 0.7.5
-spin aka deploy --no-confirm --create-name audiolab-edge
+spin aka login
+spin aka deploy --build --create-name audiolab-edge
 ```
 
-The app comes up on `https://<uuid>.fwf.app` as a wildcard route.
-`--create-name` is accepted **only on the first deploy** — after that the plugin
-writes `.spin-aka/config.toml` into the project and the workspace is linked, so
-later deploys are just `spin aka deploy --no-confirm`.
+`--build` builds first, so there is no separate step. The app comes up on
+`https://<uuid>.fwf.app` as a wildcard route. `--create-name` is accepted **only
+on the first deploy** — after that the plugin writes `.spin-aka/config.toml`
+into the project and later deploys are just `spin aka deploy --no-confirm`.
 
-**What the platform gives us**, read out of the WIT world
-(`ghcr.io/fermyon/akamai-functions/wit:1.1.0`):
+You need the `aka` plugin (`spin plugins install aka`) and an Akamai account
+with Functions enabled. Akamai's docs still describe the service as limited
+availability behind an onboarding form, while Fermyon announced GA in November
+2025 — so the docs may be stale, and the fastest answer is to ask Akamai
+directly.
 
-- It is a **component platform**, expressed purely as WIT worlds — a core module
-  will not do.
-- Key-value, variables, and `local_service_chaining` (components can call each
-  other internally) are available. None are used here yet.
-- It accepts **both wasip2 and wasip3**. We are on wasip2 because *Rust cannot
-  emit wasip3* — the target does not exist on stable or nightly. The constraint
-  is the toolchain, not Akamai.
+### It is checked against Akamai before it is sent
 
-**Two known gaps before a deploy would be trustworthy:**
+`spin.toml` carries `targets = ["akamai-functions"]`. `spin build` resolves that
+against [spinframework/spin-environments](https://github.com/spinframework/spin-environments),
+fetches the WIT world Akamai actually provides, and validates this component's
+imports and exports against it. It is quiet when it passes; to watch it work:
 
-1. `spin.toml` has no `targets` key yet, and `spin targets update` has never run
-   on the build machine.
-2. **A WASI version skew nobody has validated.** The component imports both
-   `@0.2.0` (from spin-sdk 3.1.1) and `@0.2.9` (from Rust's wasip2 std), while
-   Akamai's world provides `@0.2.6` and `@0.3.0`. Installing `wasm-tools` and
-   running world-conformance validation is the cheap next step. Akamai's own
-   Rust template pins **spin-sdk 6**; this repo is on 3.1.1.
+```bash
+RUST_LOG=spin_environments=info spin build
+```
 
----
+```
+INFO spin_environments: Validated component audiolab-edge … against target world
+                        akamai:functions/http-trigger@1.0.0
+INFO spin_environments: Validated component audiolab-edge … against all target worlds
+```
+
+It tries each world the environment offers. The two async worlds
+(`http-trigger-async@1.1.0`) are **rejected**, and correctly — they require a
+`wasi:http/handler@0.3.0` export, which is wasip3, and Rust cannot emit wasip3.
+It then validates against `akamai:functions/http-trigger@1.0.0` and passes.
+
+> A note for anyone who goes looking with `strings`: this component imports WASI
+> at `@0.2.9` and exports `wasi:http/incoming-handler@0.2.0`, while Akamai
+> provides `@0.2.6`. That is not a skew, it is the component model's version
+> matching working as specified — `0.2.x` canonicalises to `@0.2` and matches by
+> string equality, in both directions. The `@0.2.0` strings a grep turns up are
+> inside the core module's own import section, bridged by `wit-component`, and
+> no host ever sees them.
+
+`spin targets update` does **not** exist in Spin 4.0.2 — that subcommand is
+unreleased. Nothing needs to run first.
+
+### The limits that matter
+
+From [Akamai's quotas and limits](https://techdocs.akamai.com/akamai-functions/docs/quotas-and-limits),
+with this build measured against them:
+
+| | limit | this build |
+|---|---|---|
+| app size | 50 MiB | **2.65 MB** — 5% |
+| request/response | 10 MiB | largest response **1.78 MB** gzipped |
+| memory per invocation | 128 MiB | 2.4 MB of embedded assets |
+| handler duration | 30 s | a render is ~260 ms |
+
+The response cap is the one worth designing around, and it is why compression
+matters here beyond politeness: `babylon.js` uncompressed is 8.26 MB against a
+10 MiB ceiling — inside it, but with the whole safety margin spent on one file.
+Gzipped it is 1.78 MB and the question goes away.
+
+Akamai's docs hedge that these are public-preview defaults and say to contact a
+representative for higher limits. No pricing or free tier is published anywhere
+public; third-party figures found in search conflate Functions with EdgeWorkers
+or Linode compute and should not be trusted.
 
 ## What works, and what doesn't
 

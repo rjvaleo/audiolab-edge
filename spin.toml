@@ -6,6 +6,23 @@ version = "0.1.0"
 authors = ["Richard Valeo"]
 description = "Granular audio, at the edge. One page, one sound, one visual."
 
+# **Akamai Functions, named here so the build checks itself against it.**
+#
+# `spin build` resolves this against spinframework/spin-environments, fetches
+# the WIT world Akamai actually provides, and validates the component's imports
+# and exports against it — before anybody tries to deploy. That check is the
+# whole reason this key is worth having: it turns "we think it will load" into
+# a line of build output.
+#
+# It tries each world the environment offers, in order. The two async worlds
+# (http-trigger-async@1.1.0) are rejected because they require a
+# `wasi:http/handler@0.3.0` export, which is wasip3 — Rust cannot emit it. It
+# then validates against `akamai:functions/http-trigger@1.0.0` and passes.
+#
+# Note `spin targets update` does NOT exist in Spin 4.0.2; that subcommand is
+# unreleased. Nothing needs to be run first — `spin build` fetches what it needs.
+targets = ["akamai-functions"]
+
 [[trigger.http]]
 route = "/..."
 component = "audiolab-edge"
