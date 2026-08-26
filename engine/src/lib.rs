@@ -96,6 +96,8 @@ thread_local! {
     static OUT: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
     /// The one buffer the page writes into — see `scratch`.
     static SCRATCH: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
+    /// The last exported file, until the page has copied it out.
+    static BYTES: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     /// The effect rack. One, beside the one document.
     ///
     /// **`default_chain`, not `empty`.** That is what `racks.get` falls back to
@@ -135,6 +137,77 @@ pub extern "C" fn scratch(len: usize) -> *mut f32 {
     })
 }
 
+
+/// Render the document to an AIFF, in memory, and say how many bytes it is.
+///
+/// **`edit::render::write_aiff_controlled`, which is the desktop's own writer.**
+/// Not a WAV header assembled here: the desktop exports AIFF, the encoder is in
+/// the vendored `edit` crate and is generic over `W: Write`, and a `Vec<u8>`
+/// satisfies that. So the file this produces is byte-for-byte the file the
+/// desktop would produce from the same document — which is the whole point of
+/// the two builds sharing an engine.
+///
+/// The granular render happens here rather than being taken from `OUT`, because
+/// `OUT` has already been through the rack and `write_aiff_controlled` runs the
+/// rack itself. Handing it the post-rack buffer would compress and EQ the sound
+/// twice.
+///
+/// `control` is the hook an automation lane reaches the file through. There is
+/// no automation in this build — see the stub above — so it does nothing, and
+/// says so rather than being left as an unexplained empty closure.
+#[no_mangle]
+pub extern "C" fn export_aiff(bits: u32) -> usize {
+    let (ch, rate, st) = match DOC.with(|d| {
+        d.borrow()
+            .as_ref()
+            .map(|l| (l.channels as usize, l.sample_rate, l.stretch))
+    }) {
+        Some(t) => t,
+        None => return error("no document is open"),
+    };
+
+    let audio = SRC.with(|s| {
+        let src = s.borrow();
+        fx::grain::granular(&src, ch, rate, st.ratio, st.semitones, st.window_ms, &st.grain)
+    });
+    if audio.is_empty() {
+        return error("there is nothing to export");
+    }
+
+    let mut rack = RACK.with(|r| r.borrow().build(rate, ch));
+    rack.reset();
+
+    let mut out: Vec<u8> = Vec::new();
+    let meta = audio_core::aiff::Meta::default();
+    let bits = match bits {
+        16 | 24 | 32 => bits as u16,
+        _ => 24,
+    };
+
+    match edit::render::write_aiff_controlled(
+        audio,
+        ch as u16,
+        rate,
+        &mut rack,
+        &mut out,
+        bits,
+        &meta,
+        |_rack, _frame| { /* no automation in this build */ },
+    ) {
+        Ok(_) => {
+            let n = out.len();
+            BYTES.with(|b| *b.borrow_mut() = out);
+            n
+        }
+        Err(e) => error(&format!("the export failed: {e}")),
+    }
+}
+
+/// Where the last export is, until the page copies it out.
+#[no_mangle]
+pub extern "C" fn bytes_ptr() -> *const u8 {
+    BYTES.with(|b| b.borrow().as_ptr())
+}
 
 /// The band limits the room's floor is laid out for, from `routes.rs`.
 const MASTER_LO_HZ: f32 = 20.0;

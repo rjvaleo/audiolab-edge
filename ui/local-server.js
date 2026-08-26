@@ -439,6 +439,138 @@
     return scopeBuf;
   }
 
+  // ── exporting the sound ─────────────────────────────────────────────────
+  //
+  // **The desktop's own AIFF writer, into memory instead of onto a disk.**
+  // `edit::render::write_aiff_controlled` is generic over `W: Write` and a
+  // `Vec<u8>` satisfies it, so the bytes this produces are byte-for-byte what
+  // the desktop would write from the same document. That is the file contract
+  // in `docs/EDGE-PARITY.md` doing its job: same engine, same encoder, same
+  // file.
+  //
+  // What differs is only the destination. There is no library to write beside,
+  // so the take goes to the browser's downloads — and `path` in the status is
+  // the name it was given rather than somewhere on a disk, which is what
+  // `pollExport` puts in its toast.
+  const exporting = {
+    running: false, phase: 'idle', fraction: 0, serial: 0,
+    error: null, cancelled: false, path: null, frames: 0,
+    cancel: false,
+  };
+
+  const exportStatus = () => ({
+    running: exporting.running,
+    phase: exporting.phase,
+    fraction: exporting.fraction,
+    serial: exporting.serial,
+    frames: exporting.frames,
+    ...(exporting.error ? { error: exporting.error } : {}),
+    ...(exporting.cancelled ? { cancelled: true } : {}),
+    ...(exporting.path ? { path: exporting.path } : {}),
+  });
+
+  /// Hand a file to the browser. The one thing the page can do that a server
+  /// cannot: there is nowhere to put it but the person's own machine.
+  function handOver(bytes, name, type) {
+    const url = URL.createObjectURL(new Blob([bytes], { type }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Long enough for the download to have started. Revoking immediately
+    // cancels it in some browsers.
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  }
+
+  async function exportSound(body) {
+    exporting.running = true;
+    exporting.cancel = false;
+    exporting.cancelled = false;
+    exporting.error = null;
+    exporting.path = null;
+    exporting.frames = 0;
+    exporting.fraction = 0;
+    exporting.phase = 'starting';
+
+    try {
+      const e = await engine();
+      if (body.p) await open(body.p);
+      if (exporting.cancel) throw { cancelled: true };
+
+      // The phases the panel names. `write_aiff_controlled` is one call and
+      // cannot report from inside itself, so these mark the steps around it
+      // rather than pretending to a progress it does not publish.
+      exporting.phase = 'stretching';
+      exporting.fraction = 0.1;
+      await yieldTask();
+
+      exporting.phase = 'effects';
+      exporting.fraction = 0.3;
+      await yieldTask();
+
+      const bits = [16, 24, 32].includes(+body.bits) ? +body.bits : 24;
+      exporting.phase = 'writing';
+      exporting.fraction = 0.6;
+      await yieldTask();
+
+      const n = e.ex.export_aiff(bits);
+      if (!n) throw new Error('the engine wrote nothing');
+      const said = (() => {
+        // A failure comes back through the same text channel every other
+        // route uses, so a plain length is the success case.
+        try {
+          const at = e.ex.text_ptr();
+          const t = JSON.parse(new TextDecoder().decode(e.u8().slice(at, at + n)));
+          return t && t.error ? t.error : null;
+        } catch { return null; }
+      })();
+      if (said) throw new Error(said);
+
+      const at = e.ex.bytes_ptr();
+      // Copied out before anything else can grow the memory under it.
+      const bytes = e.u8().slice(at, at + n);
+
+      const base = (audio.path || 'sound').split('/').pop().replace(/\.[^.]+$/, '');
+      const st = (await j2(e)).stretch || {};
+      const label = st.ratio && st.ratio !== 1
+        ? `${base} ${st.ratio.toFixed(2)}x ${bits}-bit.aiff`
+        : `${base} ${bits}-bit.aiff`;
+
+      if (exporting.cancel) throw { cancelled: true };
+      handOver(bytes, label, 'audio/aiff');
+
+      // **From the file's own COMM chunk, not from `play.frames`.**
+      //
+      // `play.frames` is the length of the *playback* buffer, which is whatever
+      // was last rendered for the transport — so a 4x stretch exported a 25
+      // second file and the panel said 6.38 seconds, because that is how long
+      // the thing you had been listening to was. `numSampleFrames` is at byte
+      // 22 of an AIFF and is exactly what was written.
+      exporting.frames = new DataView(bytes.buffer, bytes.byteOffset, 32).getUint32(22);
+      exporting.path = label;
+      exporting.phase = 'done';
+      exporting.fraction = 1;
+    } catch (err) {
+      if (err && err.cancelled) {
+        exporting.cancelled = true;
+        exporting.phase = 'cancelled';
+      } else {
+        exporting.error = (err && err.message) || String(err);
+        exporting.phase = 'failed';
+      }
+    } finally {
+      exporting.running = false;
+      exporting.serial += 1;
+    }
+  }
+
+  /// The document, for the stretch ratio the filename carries.
+  const j2 = async (e) => {
+    try { return e.said(e.ex.doc_json()); } catch { return {}; }
+  };
+
   // ── filming ─────────────────────────────────────────────────────────────
   //
   // **The server's half of the video export, which is analysis and nothing
@@ -778,6 +910,12 @@
       // Polled ten times a second while the modal is open. `wave` is this
       // build's own addition to the shape: the desktop's panel has a level
       // meter and no scope, and the modal here draws what is going in.
+      // The export's progress. Asked once at startup — an export left running
+      // when the page was reloaded is still running, and this is how the bar
+      // finds out — and then every 250 ms while one is going.
+      case '/api/export':
+        return json(exportStatus());
+
       // The reel's progress, polled every 200 ms while it is built.
       case '/api/video':
         return json(reelStatus());
@@ -1086,6 +1224,21 @@
       // is the `a` of the *loop range*. So every press of play fell through to
       // "not ported" and nothing made a sound, while calling the route by hand
       // with the shape I had invented worked perfectly.
+      // Start it and answer at once. The outcome arrives through
+      // `GET /api/export`, which is also where the progress comes from — the
+      // desktop's comment says a four-minute file took twenty-five seconds and
+      // the old blocking call sat there with nothing on screen.
+      case '/api/export': {
+        if (exporting.running) return json({ error: 'an export is already running' }, 409);
+        exportSound(body);
+        return json({ ok: true, started: true });
+      }
+
+      case '/api/export/stop': {
+        exporting.cancel = true;
+        return json({ ok: true });
+      }
+
       // Start the analysis and answer at once. The page polls `/api/video`
       // for the rest; blocking here would leave its progress bar at zero for
       // the whole run and time the request out on a long one.
