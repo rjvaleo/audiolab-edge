@@ -29,6 +29,15 @@
       headers: { 'content-type': 'application/json' },
     });
 
+  /// Raw bytes. The reel and the sound are Float32Arrays of millions of
+  /// numbers; as JSON they would be four times the size and a parse at both
+  /// ends, and `videoFetchFrames` already reads them with `arrayBuffer()`.
+  const binary = (view) =>
+    new Response(view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength), {
+      status: 200,
+      headers: { 'content-type': 'application/octet-stream' },
+    });
+
   /// A route that has not been ported yet, said out loud.
   ///
   /// **Not silence, and not a plausible empty answer.** A route that returns
@@ -430,6 +439,146 @@
     return scopeBuf;
   }
 
+  // ── filming ─────────────────────────────────────────────────────────────
+  //
+  // **The server's half of the video export, which is analysis and nothing
+  // else.** The encoding is the page's: `video-export.js` drives WebCodecs and
+  // `mp4.js` muxes. What it needs from here is a *reel* — one row of numbers per
+  // video frame, describing the sound at that instant — plus the sound itself
+  // to mux against.
+  //
+  // On the desktop that analysis is a thread. Here it is a loop that yields, so
+  // the 200 ms status poll the page is already making keeps being answered
+  // while it runs. Same protocol either way: post to start, poll until
+  // `phase: 'ready'`, then pull the reel in runs.
+  /// Give the event loop a turn, without `setTimeout`'s background clamp.
+  ///
+  /// A hidden tab throttles timers to roughly one a second; a `MessageChannel`
+  /// message is an ordinary task and is delivered immediately either way. This
+  /// is the difference between an export that survives being switched away
+  /// from and one that stops.
+  const yieldChannel = new MessageChannel();
+  const yieldWaiters = [];
+  yieldChannel.port1.onmessage = () => { const r = yieldWaiters.shift(); if (r) r(); };
+  const yieldTask = () => new Promise((resolve) => {
+    yieldWaiters.push(resolve);
+    yieldChannel.port2.postMessage(0);
+  });
+
+  const reel = {
+    running: false, phase: 'idle', error: null,
+    frames: 0, bands: 0, liss: 0, done: 0,
+    channels: 2, rate: 48000,
+    data: null,   // Float32Array, frames x (bands + liss*2)
+    audio: null,  // Float32Array, interleaved
+    cancel: false,
+  };
+
+  const reelStatus = () => ({
+    running: reel.running,
+    phase: reel.phase,
+    ...(reel.error ? { error: reel.error } : {}),
+    frames: reel.frames,
+    bands: reel.bands,
+    liss: reel.liss,
+    channels: reel.channels,
+    rate: reel.rate,
+    // The page shows these while it waits.
+    done: reel.done,
+    fraction: reel.frames ? reel.done / reel.frames : 0,
+  });
+
+  async function film(body) {
+    reel.running = true;
+    reel.phase = 'rendering';
+    reel.error = null;
+    reel.done = 0;
+    reel.cancel = false;
+    reel.data = null;
+    reel.audio = null;
+
+    try {
+      const e = await engine();
+      if (body.p) await open(body.p);
+
+      // The sound first. `cloud()` is the same render the transport plays, so
+      // the film is of the thing you heard rather than of a second render that
+      // might not match it.
+      const flat = await cloud();
+      if (!flat || !flat.length) throw new Error('there is nothing rendered to film');
+
+      const ch = audio.channels;
+      const rate = audio.rate;
+      const frames = Math.floor(flat.length / ch);
+      reel.channels = ch;
+      reel.rate = rate;
+      reel.audio = flat;
+
+      const fps = Math.max(1, +body.fps || 20);
+      const bands = Math.max(1, +body.bands || 280);
+      const liss = Math.max(1, +body.liss || 1024);
+      const fft = Math.max(64, +body.fft || 4096);
+      const outro = Math.max(0, +body.outro || 0);
+
+      const seconds = frames / rate + outro;
+      const total = Math.max(1, Math.ceil(seconds * fps));
+      const per = bands + liss * 2;
+
+      reel.frames = total;
+      reel.bands = bands;
+      reel.liss = liss;
+      reel.data = new Float32Array(total * per);
+      reel.phase = 'analysing';
+
+      // One window per video frame, ending at that frame's position — the same
+      // window the live meter uses, so the film's terrain is the terrain the
+      // room was drawing.
+      const win = Math.min(SCOPE_FRAMES, frames);
+      const scratchLen = win * ch;
+      const ptr = e.ex.scratch(scratchLen);
+      const buf = new Float32Array(scratchLen);
+
+      for (let f = 0; f < total; f++) {
+        if (reel.cancel) { reel.phase = 'cancelled'; reel.running = false; return; }
+
+        const at = Math.min(frames, Math.round((f / fps) * rate));
+        const from = Math.max(0, at - win);
+        buf.fill(0);
+        if (at > from) buf.set(flat.subarray(from * ch, at * ch), 0);
+
+        e.f32().set(buf, ptr >>> 2);
+        const m = e.said(e.ex.meter_json(ptr, scratchLen, ch, rate, fft, bands));
+
+        const row = f * per;
+        const spec = m.spectrum || [];
+        for (let i = 0; i < bands; i++) reel.data[row + i] = spec[i] ?? -120;
+        const xy = m.lissajous || [];
+        for (let i = 0; i < liss * 2; i++) reel.data[row + bands + i] = xy[i] ?? 0;
+
+        reel.done = f + 1;
+
+        // Yield often enough that the page's 200 ms poll is answered. Without
+        // this the whole analysis is one task and the status request driving
+        // the progress bar cannot run until it is over.
+        //
+        // **Not `setTimeout`.** A background tab clamps it to about a second,
+        // so an export begun and then switched away from crawled and then
+        // stopped outright — measured at 0 frames a second with the pane
+        // hidden, stuck at 145 of 184. `yieldTask` posts to itself instead,
+        // which is a real task the event loop runs at once and which the
+        // background throttle does not touch.
+        if ((f & 15) === 0) await yieldTask();
+      }
+
+      reel.phase = 'ready';
+      reel.running = false;
+    } catch (err) {
+      reel.error = (err && err.message) || String(err);
+      reel.phase = 'failed';
+      reel.running = false;
+    }
+  }
+
   // ── what the FX panels draw ──────────────────────────────────────────────
   const SPECTRUM_BINS = 320;
   const WAVE_POINTS = 256;
@@ -629,6 +778,28 @@
       // Polled ten times a second while the modal is open. `wave` is this
       // build's own addition to the shape: the desktop's panel has a level
       // meter and no scope, and the modal here draws what is going in.
+      // The reel's progress, polled every 200 ms while it is built.
+      case '/api/video':
+        return json(reelStatus());
+
+      // A run of rows, as raw floats. `i` is the first frame, `n` how many.
+      case '/api/video/frames': {
+        if (!reel.data) return json({ error: 'no reel has been analysed' }, 409);
+        const per = reel.bands + reel.liss * 2;
+        const i = Math.max(0, +url.searchParams.get('i') || 0);
+        const n = Math.max(0, +url.searchParams.get('n') || 0);
+        const from = Math.min(i, reel.frames) * per;
+        const to = Math.min(i + n, reel.frames) * per;
+        return binary(reel.data.subarray(from, to));
+      }
+
+      // The sound the film is muxed against — interleaved, the engine's own
+      // render, the one the transport plays.
+      case '/api/video/audio': {
+        if (!reel.audio) return json({ error: 'no reel has been analysed' }, 409);
+        return binary(reel.audio);
+      }
+
       case '/api/record': {
         const lv = micLevels();
         const seconds = mic.recording
@@ -915,6 +1086,20 @@
       // is the `a` of the *loop range*. So every press of play fell through to
       // "not ported" and nothing made a sound, while calling the route by hand
       // with the shape I had invented worked perfectly.
+      // Start the analysis and answer at once. The page polls `/api/video`
+      // for the rest; blocking here would leave its progress bar at zero for
+      // the whole run and time the request out on a long one.
+      case '/api/video': {
+        if (reel.running) return json({ error: 'a reel is already being analysed' }, 409);
+        film(body);
+        return json({ ok: true, started: true });
+      }
+
+      case '/api/video/stop': {
+        reel.cancel = true;
+        return json({ ok: true });
+      }
+
       // Arm opens the input and meters it while keeping nothing; record and
       // stop are their own acts. That separation is the desktop's and it is
       // worth keeping: it is how you set a gain before playing the thing you
