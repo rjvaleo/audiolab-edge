@@ -200,16 +200,20 @@
     /// startup. `first-sound.js` then moved the app to Grain without clicking
     /// anything, so the rail said Browse while the app was in Grain — and the
     /// second-click check trusted that, decided Browse was already current, and
-    /// swallowed the click. The button looked dead.
+    /// swallowed the click.
     ///
-    /// A light that is derived cannot disagree with the app. Theme is the
-    /// exception and it earns it: it is a pane rather than a mode, so it is
-    /// where you are whenever it is the pane on show.
+    /// Theme is checked first because it is a pane rather than a mode. That is
+    /// only safe because leaving Theme now genuinely closes it — see `go()`.
+    /// While it did not, the light stuck on Theme for ever: you could click
+    /// Browse, land in `overview`, and the rail still said Theme because the
+    /// pane was still open behind it.
     const current = () => {
       const theme = document.getElementById('paneTheme');
-      if (theme && !theme.classList.contains('hidden')) {
-        return rail.querySelector('.rl-item[data-panel="theme"]');
-      }
+      const panel = document.getElementById('leftPanel');
+      const themeShown = theme && !theme.classList.contains('hidden') &&
+        panel && !panel.classList.contains('collapsed') &&
+        !panel.classList.contains('drawer-closed');
+      if (themeShown) return rail.querySelector('.rl-item[data-panel="theme"]');
       const mode = (typeof state !== 'undefined' && state.mode) || 'overview';
       return rail.querySelector(`.rl-item[data-mode="${mode}"]`);
     };
@@ -219,35 +223,75 @@
       items().forEach((b) => b.classList.toggle('rl-on', b === now));
     };
 
-    /// The panel this rail opens onto — the file list, the theme editor, the
-    /// library's parts. In Grain and Visual it is a drawer over the work; in
-    /// Browse it is a column beside it. `app.js` owns both behaviours and
-    /// already has the two functions for it.
-    const panelShut = () => {
-      const p = document.getElementById('leftPanel');
-      return p.classList.contains('collapsed') || p.classList.contains('drawer-closed');
+    // ── going somewhere ─────────────────────────────────────────────────────
+    //
+    // **One rule: the button you press is the space you get, and nothing else
+    // comes with it.**
+    //
+    // This file used to do half the job — let `app.js` change the mode, then
+    // force the drawer open on top of wherever you landed. Two faults followed
+    // from that and both were reported as "the nav doesn't work":
+    //
+    //   * Pressing Visual put you in the Room and opened the *file list* over
+    //     it in a 330px drawer, because the drawer still held whatever pane was
+    //     last shown. The Room is the whole point of that button and you could
+    //     not see it.
+    //   * Pressing Grain or Browse never closed the Theme editor, because
+    //     `setMode` has no opinion about panes. You left Theme and Theme
+    //     stayed, lit and on screen.
+    //
+    // So the rail does the whole transition itself. Each destination states its
+    // three facts — which mode, which pane, and whether the panel is on screen
+    // at all — and every other destination's state is therefore off. There is
+    // nowhere for the previous space to survive.
+    //
+    // Grain and Visual show **no panel**. Sound files belong to Browse and
+    // nowhere else; the theme editor belongs to Theme and nowhere else. The
+    // pane is still reset to `browse` before the panel is hidden, so that a
+    // panel opened later by any other route cannot come back holding Theme.
+    const go = (item) => {
+      const mode = item.dataset.mode;
+      const pane = item.dataset.panel;
+
+      if (pane === 'theme') {
+        showPane('left', 'theme');
+        openDrawer();
+        return true;
+      }
+
+      // `app.js`'s own guard, kept: Grain with nothing open has nothing to
+      // show, and it says so rather than arriving empty.
+      if (mode === 'edit' && !state.selectedFile && !state.tabs.length) {
+        toast('Open a sound first — double-click one in the library');
+        return false;
+      }
+
+      setMode(mode);
+
+      if (mode === 'overview') {
+        // The library, and the one place sound files appear.
+        showPane('left', 'browse');
+        openDrawer();
+      } else {
+        // Grain and Visual get the whole width. Reset the pane first so the
+        // panel is not left holding Theme, then take it off screen.
+        showPane('left', 'browse');
+        closeDrawer();
+      }
+      return true;
     };
 
-    // Capture, so this sees the click before `app.js`'s own handler on the
-    // button. A second click on the destination you are already at should not
-    // re-enter it — `setMode` to the mode you are in does nothing, which is why
-    // three of the four buttons appeared dead on a second press.
+    // Capture, and stop there. `app.js` binds its own `onclick` to these same
+    // buttons — `setMode` on `.mode-btn`, `showPane` on `.rail-btn` — and those
+    // handlers each know about half the transition. Letting them also run is
+    // what produced a Room with the file list over it. `go()` calls both
+    // functions itself, in the right order, with the panel state decided.
     rail.addEventListener('click', (e) => {
       const item = e.target.closest('.rl-item');
       if (!item || !rail.contains(item)) return;
-
-      if (item === current()) {
-        // Already here: the click means show me the tray, or hide it.
-        e.stopPropagation();
-        e.preventDefault();
-        if (panelShut()) openDrawer(); else closeDrawer();
-        return;
-      }
-
-      // Somewhere else: let `app.js` do the going, then read where that left
-      // us. After its handler, because `setMode` re-reads the panel state and a
-      // destination should always arrive with its tray open.
-      setTimeout(() => { sync(); if (panelShut()) openDrawer(); }, 0);
+      e.stopPropagation();
+      e.preventDefault();
+      if (go(item)) sync();
     }, true);
 
     // Browse's children follow Browse.
