@@ -117,6 +117,26 @@
       // built fresh for every play and the gain has to survive them.
       audio.bus = audio.ctx.createGain();
       audio.bus.connect(audio.ctx.destination);
+
+      // **The analyser the FX panels draw from.**
+      //
+      // The EQ paints a live spectrum behind its curve, the compressor paints
+      // the signal against its threshold, and the rack meters want levels —
+      // all three read `engine.spectrum`, `engine.waveform` and
+      // `r.rackLevels` off the `/api/engine/grains` poll. That route was
+      // returning empty arrays for all of them, so every one of those panels
+      // drew its static curve over nothing and looked dead while the effects
+      // were audibly working.
+      //
+      // Everything plays through it: `source -> analyser -> bus -> destination`.
+      // A node with no path to the destination is not pulled, so metering has
+      // to be *in* the path rather than tapped off the side of it.
+      audio.scope = audio.ctx.createAnalyser();
+      audio.scope.fftSize = 2048;
+      audio.scope.smoothingTimeConstant = 0.72;
+      audio.scope.connect(audio.bus);
+      audio.bins = new Uint8Array(audio.scope.frequencyBinCount);
+      audio.time = new Float32Array(audio.scope.fftSize);
     }
     return audio.ctx;
   }
@@ -403,6 +423,70 @@
     return scopeBuf;
   }
 
+  // ── what the FX panels draw ──────────────────────────────────────────────
+  const SPECTRUM_BINS = 320;
+  const WAVE_POINTS = 256;
+
+  function fxSpectrum() {
+    if (!audio.scope || !play.node) return [];
+    audio.scope.getByteFrequencyData(audio.bins);
+    const src = audio.bins;
+    const step = src.length / SPECTRUM_BINS;
+    const out = new Array(SPECTRUM_BINS);
+    for (let i = 0; i < SPECTRUM_BINS; i++) {
+      // The loudest bin in the bucket, not the average. An average of a peak
+      // and its neighbours flattens exactly the resonance the EQ is being
+      // used to find.
+      let hi = 0;
+      const from = Math.floor(i * step), to = Math.min(src.length, Math.floor((i + 1) * step) || from + 1);
+      for (let j = from; j < to; j++) if (src[j] > hi) hi = src[j];
+      out[i] = hi;
+    }
+    return out;
+  }
+
+  function fxWaveform() {
+    if (!audio.scope || !play.node) return [];
+    audio.scope.getFloatTimeDomainData(audio.time);
+    const src = audio.time;
+    const step = Math.max(1, Math.floor(src.length / WAVE_POINTS));
+    const out = [];
+    for (let i = 0; i < src.length; i += step) {
+      let hi = 0;
+      for (let j = i; j < i + step && j < src.length; j++) {
+        const v = Math.abs(src[j]);
+        if (v > hi) hi = v;
+      }
+      out.push(Math.round(hi * 1000) / 1000);
+    }
+    return out;
+  }
+
+  function fxRackLevels() {
+    if (!audio.scope || !play.node) return [];
+    audio.scope.getFloatTimeDomainData(audio.time);
+    let peak = 0;
+    for (let i = 0; i < audio.time.length; i++) {
+      const v = Math.abs(audio.time[i]);
+      if (v > peak) peak = v;
+    }
+    // Index 0 is the rack's input and the last is its output. The analyser
+    // sits after the whole chain, so the output is the measurement and the
+    // input is the same number until the engine can tap between slots.
+    const slots = (RACK_SLOTS.n || 0);
+    const out = new Array(slots + 1).fill(null);
+    out[0] = [peak, peak];
+    out[slots] = [peak, peak];
+    return out;
+  }
+
+  /// How many slots the rack has, so the levels array is the right length.
+  ///
+  /// Two to begin with, because `RackSpec::default_chain()` is an EQ and a
+  /// compressor — but it is written by both `/api/rack` handlers rather than
+  /// assumed, so adding an effect lengthens the meters with it.
+  const RACK_SLOTS = { n: 2 };
+
   /// Where the playhead is, in frames of the rendered cloud.
   function position() {
     if (!play.node) return play.offset;
@@ -455,7 +539,12 @@
     const node = ctx.createBufferSource();
     node.buffer = buf;
     node.loop = play.looping;
-    if (!SILENT) node.connect(audio.bus);
+    // **`?silent` is a gain of zero, not a missing wire.** Disconnecting the
+    // source left the analyser out of the graph, so nothing was pulled through
+    // it and the meters were dead in exactly the mode meant for looking at
+    // pictures without making a noise.
+    node.connect(audio.scope);
+    audio.bus.gain.value = SILENT ? 0 : audio.bus.gain.value || 1;
     node.start(0, Math.min(play.offset, play.frames - 1) / audio.rate);
     play.node = node;
     play.startedAt = ctx.currentTime;
@@ -634,7 +723,9 @@
 
       case '/api/rack': {
         const e = await engine();
-        return json(e.said(e.ex.rack_json(+url.searchParams.get('sr') || audio.rate)));
+        const spec = e.said(e.ex.rack_json(+url.searchParams.get('sr') || audio.rate));
+        RACK_SLOTS.n = (spec.slots || []).length;
+        return json(spec);
       }
 
       // ── two that are empty, and are supposed to be ──
@@ -688,8 +779,24 @@
           // read the schedule from `/api/grains` instead, which is the same
           // enumeration.
           grains: [],
-          spectrum: [],
-          waveform: [],
+
+          // **What the FX panels draw.** The EQ wants byte magnitudes across
+          // the linear bin range up to nyquist, which is exactly what
+          // `getByteFrequencyData` gives; the compressor wants the signal.
+          // Decimated to what those canvases actually plot — 320 bins and 256
+          // samples — because sending 1,024 floats twenty times a second to
+          // draw a 309-pixel-wide box is bytes nobody looks at.
+          spectrum: fxSpectrum(),
+          waveform: fxWaveform(),
+
+          // One pair per point in the chain: the input, then one after each
+          // module. Only the ends are honest — the rack is rendered in a
+          // single pass and the engine exposes no taps between slots, so a
+          // per-slot number would be invented. `paintRackMeters` skips a pair
+          // it is not given, which leaves those meters still rather than
+          // wrong.
+          rackLevels: fxRackLevels(),
+
           load: { now: 0, mean: 0, worst: 0 },
           ...(play.looping && play.frames
             ? { loop: { a: 0, b: play.frames } }
@@ -839,6 +946,7 @@
         const ptr = e.ex.scratch((text.length + 3) >> 2);
         e.u8().set(text, ptr);
         const out = e.said(e.ex.rack_set(ptr, text.length, audio.rate));
+        RACK_SLOTS.n = (out.slots || body.slots || []).length;
         play.dirty = true;
         if (play.node) await start();
         return json(out);
