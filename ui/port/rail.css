@@ -80,6 +80,14 @@
   font-size: 17px;
   line-height: 1;
 }
+/* The drawn icons. `currentColor` is the whole reason they are inline SVG —
+   lit, dim and hover are already decided by the button's own colour, so there
+   is no second set of rules to keep level with it. */
+#leftRail .rl-item .rl-ic svg {
+  width: 19px;
+  height: 19px;
+  display: block;
+}
 #leftRail .rl-item .rl-lb {
   font-size: 12px;
   font-weight: 600;
