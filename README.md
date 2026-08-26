@@ -10,6 +10,7 @@ WebAssembly, and draws one big thing while it does.
 [![Rust](https://img.shields.io/badge/Rust-2021-000000?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 [![component](https://img.shields.io/badge/component-1.99%20MB-blue?style=flat-square)](#what-it-weighs)
 [![engine tests](https://img.shields.io/badge/engine%20tests-624%20passing-success?style=flat-square)](#tests)
+[![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue?style=flat-square)](#license)
 
 The engine is the one from
 [**audiolab**](https://github.com/rjvaleo/__Audio-Edit---Tag) — a desktop audio
@@ -309,6 +310,25 @@ lines of Rust, 1,033 Rust tests and 222 browser tests.
 
 This repository was seeded by copying rather than by forking history: nothing
 here shares a commit with it.
+
+## License
+
+Dual-licensed under either of
+
+- **Apache License, Version 2.0** — [`LICENSE-APACHE`](LICENSE-APACHE)
+- **MIT license** — [`LICENSE-MIT`](LICENSE-MIT)
+
+at your option. This is the Rust ecosystem's convention and it is what the Cargo
+manifests here have declared from the start; the files now exist to back that up.
+
+**That includes `engine/vendor/`.** The vendored crates are the same DSP the
+desktop build runs — `audio-core`, `fx`, `edit` and the four wire-format files —
+and they carry the same terms, which is what makes the port honest: the engine
+you can read here is the engine that produced the sound.
+
+Unless you state otherwise, any contribution intentionally submitted for
+inclusion in this work shall be dual-licensed as above, without additional terms
+or conditions.
 
 ## Documents
 
