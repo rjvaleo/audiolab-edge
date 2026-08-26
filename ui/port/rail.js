@@ -79,7 +79,10 @@
     { icon: '⌕', label: 'Search', panel: 'search' },
     { icon: '◴', label: 'Scan', panel: 'scan', disk: true },
     { icon: '⌂', label: 'Folder', panel: 'import', disk: true },
-    { icon: '●', label: 'Record', panel: 'record', disk: true },
+    // **No disk needed any more.** The desktop's record writes a WAV to the
+    // library; this one opens the browser's microphone and hands the take
+    // straight to the player, so it travels after all.
+    { icon: '●', label: 'Record', panel: 'record' },
   ];
 
   /// **There is no disk in a browser.** Scanning a library, choosing its folder
@@ -362,6 +365,18 @@
         return;
       }
       if (go(item)) sync();
+    }, true);
+
+    // **Record opens a window, not a tray.** It is a `.rail-btn` like the
+    // other library children, so `app.js` would otherwise `showPane` it into
+    // the left panel — which is where its markup used to live and no longer
+    // does. Caught here and sent to the modal instead.
+    rail.addEventListener('click', (e) => {
+      const child = e.target.closest('.rl-child[data-panel="record"]');
+      if (!child || !rail.contains(child)) return;
+      e.stopPropagation();
+      e.preventDefault();
+      if (typeof openRecordModal === 'function') openRecordModal();
     }, true);
 
     // Browse's children follow Browse.

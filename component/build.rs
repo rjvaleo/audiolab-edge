@@ -39,6 +39,9 @@ const ASSETS: &[(&str, &str, &str, bool)] = &[
     ("/rail.css", "../ui/port/rail.css", "text/css; charset=utf-8", true),
     // Opens a sound on arrival. Edge build only.
     ("/first-sound.js", "../ui/port/first-sound.js", "text/javascript; charset=utf-8", true),
+    // Record: the window, and what it is dressed in.
+    ("/record-modal.js", "../ui/port/record-modal.js", "text/javascript; charset=utf-8", true),
+    ("/record-modal.css", "../ui/port/record-modal.css", "text/css; charset=utf-8", true),
     ("/theme-palettes.js", "../ui/port/theme-palettes.js", "text/javascript; charset=utf-8", true),
     ("/theme-derive.js", "../ui/port/theme-derive.js", "text/javascript; charset=utf-8", true),
     ("/grain-shapes.js", "../ui/port/grain-shapes.js", "text/javascript; charset=utf-8", true),

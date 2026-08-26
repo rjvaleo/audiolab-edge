@@ -1,0 +1,125 @@
+/* The record window. See `record-modal.js`.
+   `.modal`, `.modal-box` and `.modal-head` are `app.css`'s — this only says
+   what is particular to recording. */
+
+.rec-box {
+  width: 560px;
+  max-width: 94vw;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 24px 70px var(--shadow);
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── the waveform going in, with the readout over it ──────────────────────
+   Fixed height rather than an aspect ratio: this is an instrument readout,
+   and it should be the same size whatever the window is doing. */
+.rec-scope-wrap {
+  position: relative;
+  height: 132px;
+  background: var(--surface-3);
+  border-bottom: 1px solid var(--line);
+}
+.rec-scope-wrap canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+/* Over the waveform, as asked — top left, where it does not sit on the signal.
+   `pointer-events: none` so it never eats a click meant for the window. */
+.rec-scope-read {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  pointer-events: none;
+  font-size: 11px;
+  letter-spacing: .02em;
+  color: var(--text-2);
+  text-shadow: 0 1px 3px var(--shadow-hard, rgba(0, 0, 0, .8));
+}
+
+.rec-modal-body {
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Arming is what opening the window means, so its button has no job left.
+   Hidden rather than removed: `drawRecordPanel` still writes to it. */
+.rec-hidden-arm { display: none !important; }
+
+/* The transport, given room. NO FLEX WIDTH — these are fixed, like every other
+   button in this interface, so they do not change size with how many of them
+   happen to be visible. */
+.rec-modal-body .rec-transport {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 2px;
+}
+.rec-modal-body .rec-transport > * { flex: none; }
+.rec-modal-body #recStart {
+  width: 132px;
+  height: 34px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.rec-modal-body #recStop {
+  width: 132px;
+  height: 34px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+/* The note is guidance, not chrome. It says what the desktop's panel says
+   about writing a WAV to the library, which is not true here — the module
+   rewrites it at build time rather than this stylesheet hiding it. */
+.rec-modal-body .note { margin: 0; }
+
+/* ── the level meter ───────────────────────────────────────────────────────
+   `app.css` sizes this for a 330px side panel. In a 560px window it stretched
+   to 526x74, which reads as an empty box rather than as a pair of bars. Two
+   fixed bars, laid on their side, because a horizontal meter is what fits a
+   wide window. NO FLEX WIDTH on the bars themselves — the height is the
+   signal and the length is fixed. */
+.rec-modal-body .rec-meter {
+  width: 100%;
+  height: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0;
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.rec-modal-body .rec-meter .rec-bar {
+  flex: none;
+  height: 6px;
+  width: var(--rec, 0%);
+  align-self: flex-start;
+  border-radius: 0;
+  transition: none;
+  /* `app.css` paints these `to top` because there they are upright columns.
+     Lying down, that gradient runs across the thickness instead of along the
+     travel, so green/amber/red never appear where the level is. */
+  background: linear-gradient(to right, #30c878 0 70%, #e3bf3d 70% 90%, #e64e4e 90%);
+}
+
+/* The readout lives over the waveform; this is the copy underneath it. */
+.rec-hidden-read { display: none !important; }
+
+/* Why it will not arm. Only ever shown when there is something to say. */
+.rec-problem {
+  padding: 9px 16px;
+  background: color-mix(in srgb, var(--bad, #e64e4e) 14%, transparent);
+  border-bottom: 1px solid var(--line);
+  color: var(--bad, #e64e4e);
+  font-size: 12px;
+}
+.rec-problem.hidden { display: none; }

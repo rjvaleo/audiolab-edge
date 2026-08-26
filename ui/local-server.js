@@ -41,11 +41,29 @@
 
   /// Everything the page knows about, loaded once.
   const shipped = { sounds: null };
-  async function sounds() {
+  async function shippedSounds() {
     if (!shipped.sounds) {
       shipped.sounds = await (await realFetch('/sounds/manifest.json')).json();
     }
     return shipped.sounds;
+  }
+
+  // ── takes ──
+  //
+  // **A recording is a sound like any other, and that is the whole trick.**
+  // The desktop writes a take to `Recordings/` on disk and rescans; there is no
+  // disk here, so a take joins the same list the shipped sounds are in, with
+  // the same manifest shape, and its samples are kept beside it. Everything
+  // downstream — `selectFile`, `/api/edit`, the waveform, the grain engine, the
+  // rack, the visuals — then works on it without knowing where it came from.
+  //
+  // In memory only. A reload loses them, which is honest for a page with no
+  // storage, and is why the modal offers the take back as a file.
+  const takes = [];
+  const takePcm = new Map(); // path -> { flat, rate, channels, frames }
+
+  async function sounds() {
+    return [...(await shippedSounds()), ...takes];
   }
 
   const FOLDER = 'Sounds';
@@ -131,18 +149,182 @@
     if (!it) throw new Error(`no such sound: ${path}`);
 
     const e = await engine();
-    const bytes = await (await realFetch(`/sounds/${it.name}`)).arrayBuffer();
-    const decoded = await context().decodeAudioData(bytes);
-    const flat = interleaved(decoded);
+
+    // A take is already decoded and already interleaved — it never went to a
+    // server and there is nothing to fetch.
+    const held = takePcm.get(path);
+    let flat, rate;
+    if (held) {
+      flat = held.flat;
+      rate = held.rate;
+      audio.buffer = held.buffer;
+    } else {
+      const bytes = await (await realFetch(`/sounds/${it.name}`)).arrayBuffer();
+      const decoded = await context().decodeAudioData(bytes);
+      flat = interleaved(decoded);
+      rate = decoded.sampleRate;
+      audio.buffer = decoded;
+    }
 
     const ptr = e.ex.scratch(flat.length);
     e.f32().set(flat, ptr >>> 2);
-    e.ex.doc_open(ptr, flat.length, 2, decoded.sampleRate);
+    e.ex.doc_open(ptr, flat.length, 2, rate);
 
     audio.path = path;
-    audio.buffer = decoded;
     audio.channels = 2;
-    audio.rate = decoded.sampleRate;
+    audio.rate = rate;
+  }
+
+  // ── the microphone ──────────────────────────────────────────────────────
+  //
+  // **The desktop opens a sound card; this opens `getUserMedia`.** The panel
+  // above is the desktop's own, unchanged: it arms, it meters, it records, it
+  // stops, and it polls this route ten times a second for the levels. What it
+  // gets back here is a browser input instead of an ALSA one.
+  //
+  // Arming and recording are deliberately separate, and that separation is the
+  // desktop's: arming opens the input and shows its level while keeping
+  // nothing, so a gain can be set before anything that matters is played.
+  //
+  // Capture is `MediaRecorder` rather than a `ScriptProcessorNode` (deprecated)
+  // or an `AudioWorklet` (a second file, a second build step, and a message
+  // port to marshal samples across). MediaRecorder hands back one blob that
+  // `decodeAudioData` already knows how to read — the same call the shipped
+  // Opus goes through — so a take arrives in exactly the shape the engine
+  // takes.
+  const MAX_SECONDS = 120;
+  const SCOPE_POINTS = 240;
+
+  const mic = {
+    stream: null, source: null, analyser: null, recorder: null,
+    armed: false, recording: false,
+    chunks: [], startedAt: 0, takeNo: 0,
+    fft: null, peak: null,
+  };
+
+  function micLevels() {
+    if (!mic.analyser) return { left: 0, right: 0, wave: [] };
+    mic.fft.set(new Float32Array(mic.fft.length));
+    mic.analyser.getFloatTimeDomainData(mic.fft);
+
+    let peak = 0;
+    for (let i = 0; i < mic.fft.length; i++) {
+      const v = Math.abs(mic.fft[i]);
+      if (v > peak) peak = v;
+    }
+
+    // The scope, decimated to what the modal actually draws. Min and max per
+    // bucket rather than every nth sample: picking one sample in nine misses
+    // the transient that made the take clip, which is the one thing a person
+    // watching a level meter is watching for.
+    const wave = [];
+    const step = Math.max(1, Math.floor(mic.fft.length / SCOPE_POINTS));
+    for (let i = 0; i < mic.fft.length; i += step) {
+      let lo = 0, hi = 0;
+      for (let j = i; j < i + step && j < mic.fft.length; j++) {
+        if (mic.fft[j] < lo) lo = mic.fft[j];
+        if (mic.fft[j] > hi) hi = mic.fft[j];
+      }
+      wave.push(Math.round(lo * 1000) / 1000, Math.round(hi * 1000) / 1000);
+    }
+
+    // One input, two bars. A mono microphone is the normal case and two
+    // identical bars is the truth about it, not a fudge.
+    return { left: peak, right: peak, wave };
+  }
+
+  async function micDevices() {
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      // Labels are empty until permission has been granted once — that is the
+      // browser's rule, not a bug to work around.
+      return all.filter((d) => d.kind === 'audioinput')
+                .map((d, i) => d.label || `Input ${i + 1}`);
+    } catch { return []; }
+  }
+
+  async function micArm(deviceLabel) {
+    if (mic.armed) return;
+    let deviceId;
+    if (deviceLabel) {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      const found = all.find((d) => d.kind === 'audioinput' && d.label === deviceLabel);
+      if (found) deviceId = found.deviceId;
+    }
+    mic.stream = await navigator.mediaDevices.getUserMedia({
+      audio: deviceId ? { deviceId: { exact: deviceId } } : true,
+    });
+    const ctx = context();
+    if (ctx.state === 'suspended') { try { await ctx.resume(); } catch { /* gesture */ } }
+    mic.source = ctx.createMediaStreamSource(mic.stream);
+    mic.analyser = ctx.createAnalyser();
+    mic.analyser.fftSize = 2048;
+    mic.fft = new Float32Array(mic.analyser.fftSize);
+    // **Not connected to the destination.** Monitoring a microphone through
+    // the speakers it is sitting next to is feedback, every time.
+    mic.source.connect(mic.analyser);
+    mic.armed = true;
+  }
+
+  function micDisarm() {
+    if (mic.recording) { try { mic.recorder.stop(); } catch { /* already */ } }
+    if (mic.stream) for (const t of mic.stream.getTracks()) t.stop();
+    mic.stream = null; mic.source = null; mic.analyser = null;
+    mic.recorder = null; mic.chunks = []; mic.fft = null;
+    mic.armed = false; mic.recording = false;
+  }
+
+  function micStart() {
+    if (!mic.armed || mic.recording) return;
+    mic.chunks = [];
+    mic.recorder = new MediaRecorder(mic.stream);
+    mic.recorder.ondataavailable = (e) => { if (e.data.size) mic.chunks.push(e.data); };
+    mic.recorder.start(200);
+    mic.recording = true;
+    mic.startedAt = context().currentTime;
+  }
+
+  /// Stop, decode, and make the take the open document.
+  async function micStop(name) {
+    if (!mic.recording) return null;
+    const rec = mic.recorder;
+    const ended = new Promise((done) => { rec.onstop = done; });
+    rec.stop();
+    await ended;
+    mic.recording = false;
+
+    const blob = new Blob(mic.chunks, { type: rec.mimeType || 'audio/webm' });
+    mic.chunks = [];
+    if (!blob.size) return null;
+
+    const decoded = await context().decodeAudioData(await blob.arrayBuffer());
+    const flat = interleaved(decoded);
+    const frames = decoded.length;
+    const seconds = frames / decoded.sampleRate;
+
+    mic.takeNo += 1;
+    const label = (name || `Take ${mic.takeNo}`).replace(/[\\/]/g, '-');
+    const file = `${label}.wav`;
+    const path = `${FOLDER}/${file}`;
+
+    takePcm.set(path, { flat, rate: decoded.sampleRate, channels: 2, frames, buffer: decoded });
+    takes.push({
+      name: file, path, subdir: '', bytes: flat.length * 4,
+      duration: seconds, sampleRate: decoded.sampleRate,
+      channels: decoded.numberOfChannels, bits: 32, format: 'PCM',
+      category: 'RECORDING', confidence: 'high',
+      instrument: '', machine: '', bpm: '',
+      why: `${seconds.toFixed(2)}s, recorded here`,
+    });
+
+    // Make it the document straight away. The modal then only has to tell the
+    // interface to select it, and everything downstream is the ordinary path.
+    audio.path = null;
+    await open(path);
+    play.dirty = true;
+    play.offset = 0;
+
+    return { ok: true, seconds, rel: path, path, file, outside: false, overruns: 0 };
   }
 
   // ── the transport ──
@@ -316,6 +498,33 @@
           confidence: 'high',
           tags: 'shipped',
         }]);
+
+      // ── the microphone, as the record panel expects it ──
+      //
+      // Polled ten times a second while the modal is open. `wave` is this
+      // build's own addition to the shape: the desktop's panel has a level
+      // meter and no scope, and the modal here draws what is going in.
+      case '/api/record': {
+        const lv = micLevels();
+        const seconds = mic.recording
+          ? Math.max(0, context().currentTime - mic.startedAt) : 0;
+        return json({
+          armed: mic.armed,
+          recording: mic.recording,
+          devices: await micDevices(),
+          left: lv.left,
+          right: lv.right,
+          wave: lv.wave,
+          seconds,
+          maxSeconds: MAX_SECONDS,
+          channels: mic.stream ? (mic.stream.getAudioTracks().length ? 1 : 0) : 0,
+          sampleRate: mic.armed ? context().sampleRate : 0,
+          // Honestly zero. MediaRecorder does not report dropped blocks, and
+          // inventing a number for a field whose whole purpose is to warn you
+          // that a take has a hole in it would be worse than saying none.
+          overruns: 0,
+        });
+      }
 
       case '/api/files':
         return json(url.searchParams.get('folder') === FOLDER ? list : []);
@@ -563,6 +772,40 @@
       // is the `a` of the *loop range*. So every press of play fell through to
       // "not ported" and nothing made a sound, while calling the route by hand
       // with the shape I had invented worked perfectly.
+      // Arm opens the input and meters it while keeping nothing; record and
+      // stop are their own acts. That separation is the desktop's and it is
+      // worth keeping: it is how you set a gain before playing the thing you
+      // only get to play once.
+      case '/api/record': {
+        try {
+          switch (body.action) {
+            case 'arm':
+              await micArm(body.device);
+              return json({ ok: true, armed: mic.armed });
+            case 'disarm':
+              micDisarm();
+              return json({ ok: true, armed: false });
+            case 'start':
+              micStart();
+              return json({ ok: true, recording: mic.recording });
+            case 'stop': {
+              const done = await micStop(body.name);
+              return done ? json(done) : json({ error: 'nothing was recorded' }, 400);
+            }
+            default:
+              return json({ error: `unknown record action: ${body.action}` }, 400);
+          }
+        } catch (e) {
+          // A refused permission prompt lands here, and it is the most likely
+          // thing to land here. Said plainly rather than as a 500.
+          const why = e && e.name === 'NotAllowedError'
+            ? 'microphone permission was refused'
+            : (e && e.message) || String(e);
+          micDisarm();
+          return json({ error: why }, 400);
+        }
+      }
+
       case '/api/engine/transport': {
         if (typeof body.seek === 'number' && isFinite(body.seek)) {
           play.offset = Math.max(0, body.seek);
