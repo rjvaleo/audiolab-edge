@@ -3983,11 +3983,28 @@ function drawVisualCompressor(canvas, slot, slotIndex) {
     const y=signalY(db);ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();
     ctx.fillStyle='rgba(255,255,255,.38)';ctx.font='8px ui-monospace';ctx.textAlign='left';ctx.fillText(`${db}`,3,y-2);
   }
+  // **The signal on the dB grid, not as a linear scope trace.**
+  //
+  // It used to plot `mid - sample / 127 * amp`, centred on the middle of the
+  // box. That is right for a hot signal and useless for a quiet one: a grain
+  // cloud here measures -36 dBFS, which is 2 of 127, so the trace drew as a
+  // two-pixel wiggle on the centre line and read as nothing happening.
+  //
+  // The box already carries a dB grid with the threshold and knee drawn on it.
+  // Putting the signal on that same grid makes it legible at any level AND
+  // says the thing the panel exists to say — where the signal sits relative to
+  // the threshold, and therefore whether it is being compressed at all.
   if(samples.length){
-    const mid=(signalTop+signalBottom)/2,amp=(signalBottom-signalTop)*.46;
-    ctx.beginPath();samples.forEach((sample,i)=>{const x=i/(samples.length-1)*w,y=mid-sample/127*amp;i?ctx.lineTo(x,y):ctx.moveTo(x,y);});
-    ctx.lineTo(w,mid);ctx.lineTo(0,mid);ctx.closePath();ctx.fillStyle='rgba(174,181,188,.24)';ctx.fill();
-    ctx.beginPath();samples.forEach((sample,i)=>{const x=i/(samples.length-1)*w,y=mid-sample/127*amp;i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.strokeStyle='rgba(190,197,203,.78)';ctx.lineWidth=1.15;ctx.stroke();
+    const dbOf=(s)=>20*Math.log10(Math.max(Math.abs(s),1e-3)/127);
+    const trace=(cb)=>{samples.forEach((sample,i)=>{const x=i/(samples.length-1)*w,y=signalY(dbOf(sample));i?cb.lineTo(x,y):cb.moveTo(x,y);});};
+    ctx.beginPath();trace(ctx);
+    ctx.lineTo(w,signalBottom);ctx.lineTo(0,signalBottom);ctx.closePath();
+    // Weight enough to read against the grid it sits on. The desktop's 20%
+    // grey was set for a trace centred in the box; down at the -40 line, on a
+    // near-black graph, it disappeared.
+    ctx.fillStyle='rgba(120,190,150,.30)';ctx.fill();
+    ctx.beginPath();trace(ctx);
+    ctx.strokeStyle='rgba(150,225,180,.95)';ctx.lineWidth=1.4;ctx.stroke();
   }
   const reductionY=6+level.reduction/30*(signalTop-12);ctx.beginPath();ctx.moveTo(0,reductionY);ctx.lineTo(w,reductionY);ctx.strokeStyle='#e6c83f';ctx.lineWidth=2;ctx.stroke();
   const kneeTop=signalY(slot.thresholdDb+slot.kneeDb/2),kneeBottom=signalY(slot.thresholdDb-slot.kneeDb/2);

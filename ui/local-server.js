@@ -452,6 +452,18 @@
     return out;
   }
 
+  /// The compressor's LIVE SIGNAL trace.
+  ///
+  /// **Signed, and scaled to ±127.** `drawVisualCompressor` plots
+  /// `mid - sample / 127 * amp`, which is the range `getByteTimeDomainData`
+  /// gives once 128 is taken off it. Sending absolute floats in 0..1 meant
+  /// every point came out as `0.01 / 127` — a flat line on the midline, which
+  /// is exactly the dead trace being complained about.
+  ///
+  /// Signed rather than absolute so it draws as a waveform rather than as a
+  /// hump, and the signed extreme of each bucket rather than the average,
+  /// because averaging a peak with its neighbours is how a transient
+  /// disappears from a display whose job is to show you transients.
   function fxWaveform() {
     if (!audio.scope || !play.node) return [];
     audio.scope.getFloatTimeDomainData(audio.time);
@@ -459,12 +471,16 @@
     const step = Math.max(1, Math.floor(src.length / WAVE_POINTS));
     const out = [];
     for (let i = 0; i < src.length; i += step) {
-      let hi = 0;
+      let far = 0;
       for (let j = i; j < i + step && j < src.length; j++) {
-        const v = Math.abs(src[j]);
-        if (v > hi) hi = v;
+        if (Math.abs(src[j]) > Math.abs(far)) far = src[j];
       }
-      out.push(Math.round(hi * 1000) / 1000);
+      // **Not rounded to an integer.** `Math.round(far * 127)` turned a
+      // -36 dBFS peak into 2 and every quieter sample into 0, and the panel
+      // plots dB — so a 0 became -60 and the whole trace lay flat on the floor
+      // of the graph. Two decimals keeps about 0.1 dB of resolution at the
+      // quiet end, which is where this material lives.
+      out.push(Math.round(far * 127 * 100) / 100);
     }
     return out;
   }
