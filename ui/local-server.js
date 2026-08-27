@@ -602,7 +602,7 @@
 
     // A different chain and a different stretch are a different sound.
     play.dirty = true;
-    if (play.node) await start();
+    if (play.node) await restart();
 
     // `applied` becomes `state.edit`, so this answers with the document —
     // the same shape `/api/edit` returns — and carries `path` so the interface
@@ -1006,7 +1006,10 @@
   async function cloud() {
     if (!play.dirty && play.buffer) return play.buffer;
     const e = await engine();
+    const began = performance.now();
     const n = e.ex.render();
+    // What the last cloud cost, which is what `restart` paces itself by.
+    play.renderMs = performance.now() - began;
     if (!n) return null;
     const at = e.ex.out_ptr() >>> 2;
     play.buffer = e.f32().slice(at, at + n);
@@ -1023,10 +1026,66 @@
     }
   }
 
+  /// One render at a time, and the last request wins.
+  ///
+  /// Live controls mean a fader can ask for a new cloud while the previous one
+  /// is still being made. Two `start()` calls in flight is two source nodes on
+  /// the same bus — both sounds at once, only one of them in `play.node` and
+  /// the other with nothing left holding a reference to stop it.
+  ///
+  /// Coalescing rather than throttling, because the right rate is not a
+  /// constant: granular renders ten seconds of stereo in 117 ms and the hybrid
+  /// takes 2.7 s. Waiting for the one in flight and then doing the newest
+  /// request gives each engine its own natural rate, and never builds a queue
+  /// of clouds nobody will hear.
+  let rendering = null;
+  let askedAgain = false;
+
+  async function restart() {
+    if (rendering) { askedAgain = true; return rendering; }
+    rendering = (async () => {
+      try {
+        do { askedAgain = false; await start(); } while (askedAgain);
+      } finally { rendering = null; }
+    })();
+    return rendering;
+  }
+
   async function start() {
+    // ── where we are, before the render moves the goalposts ──
+    //
+    // `position()` is measured in frames of the *current* cloud, and `cloud()`
+    // is about to replace it. Both the reading and the length it was read
+    // against have to be taken first.
+    const fromFrames = play.frames;
+    const wasPlaying = !!play.node;
+    const fromPos = wasPlaying ? position() : play.offset;
+    const renderBegan = wasPlaying ? context().currentTime : 0;
+
     const flat = await cloud();
     if (!flat) return;
+
+    // The old cloud went on playing while the new one was made — a couple of
+    // seconds of it, on the slow engines. That time was heard, so it counts.
+    let at = fromPos;
+    if (wasPlaying) at += (context().currentTime - renderBegan) * audio.rate;
+
+    // ── the same place in the sound, not the same frame number ──
+    //
+    // The playhead is in frames of the cloud, and a ratio change makes the
+    // cloud longer or shorter. Frame 206,080 is a fifth of the way through a
+    // 2x stretch and seven eighths of the way through a half-speed one, so
+    // carrying the number across moves you somewhere you did not ask to go —
+    // usually past the end, where `min(offset, frames - 1)` parks you on the
+    // last frame and playback is over without ever saying so.
+    if (fromFrames && play.frames && fromFrames !== play.frames) {
+      at *= play.frames / fromFrames;
+    }
+    if (play.looping && play.frames) at %= play.frames;
+
     stop();
+    play.offset = Math.max(0, Math.min(at, Math.max(0, play.frames - 1)));
+
     const ctx = context();
     const buf = ctx.createBuffer(audio.channels, play.frames, audio.rate);
     for (let c = 0; c < audio.channels; c++) {
@@ -1049,6 +1108,23 @@
     // pictures without making a noise.
     node.connect(audio.scope);
     audio.bus.gain.value = SILENT ? 0 : audio.bus.gain.value || 1;
+    // ── when it ends, say so ──
+    //
+    // Nothing cleared `play.node`, so a one-shot that had finished still read
+    // as playing — for the transport, for the interface, and for every control
+    // change, which would dutifully "resume" from a playhead parked on the last
+    // frame and produce silence. That is the whole of "it stops playing and
+    // only Play brings it back".
+    //
+    // `onended` also fires for every deliberate stop and every swap, and those
+    // have already moved on: by the time it is delivered `play.node` is the new
+    // node, or null. Only the node that is still the current one has actually
+    // reached its end.
+    node.onended = () => {
+      if (play.node !== node) return;
+      play.node = null;
+      play.offset = 0;
+    };
     node.start(0, Math.min(play.offset, play.frames - 1) / audio.rate);
     play.node = node;
     play.startedAt = ctx.currentTime;
@@ -1430,10 +1506,30 @@
         // changed, and nothing you could hear did — which reads as the controls
         // doing nothing at all.
         play.dirty = true;
-        if (play.node && body.quality !== 'draft') {
-          // `stop` banks the playhead and `start` resumes from it, so the swap
-          // happens where you were rather than at the beginning.
-          await start();
+        if (play.node) {
+          // **A drag moves the sound too, now.**
+          //
+          // This used to run only on release, because a render is a discrete
+          // quarter-second and firing one per pointer event was work thrown
+          // away before it was heard. `restart` removes that worry: it does the
+          // newest request when the current render finishes and drops every
+          // one in between, so a drag updates as fast as the chosen engine can
+          // go and no faster. Granular keeps up with the pointer; the hybrid
+          // gives you a new cloud every couple of seconds.
+          //
+          // `quality: "draft"` still means what it meant — a cheaper render —
+          // it just no longer means a silent one.
+          //
+          // **A drag does not wait for its own render.** Awaiting it made every
+          // fader move take as long as a cloud takes to build — half a second
+          // on a forty-second sound — and the interface sat on that before it
+          // would accept the next movement. `restart` already refuses to queue,
+          // so letting the drag go is safe: the document has the newest value
+          // the moment it is written, and the sound catches up at whatever rate
+          // the engine can manage. A release still waits, because that is the
+          // one the caller wants to be able to trust as settled.
+          if (body.quality === 'draft') restart().catch(() => {});
+          else await restart();
         }
         return json(out);
       }
@@ -1669,7 +1765,7 @@
       case '/api/engine/transport': {
         if (typeof body.seek === 'number' && isFinite(body.seek)) {
           play.offset = Math.max(0, body.seek);
-          if (play.node) await start();
+          if (play.node) await restart();
         }
         if (typeof body.gain === 'number' && isFinite(body.gain)) {
           // `context()` for its side effect: the bus is built with the context
@@ -1681,7 +1777,7 @@
           play.looping = !!body.loop.on;
           if (play.node) play.node.loop = play.looping;
         }
-        if (body.play === true) await start();
+        if (body.play === true) await restart();
         else if (body.play === false) stop();
         return json({ position: Math.round(position()) });
       }
@@ -1701,7 +1797,7 @@
         const out = e.said(e.ex.rack_set(ptr, text.length, audio.rate));
         RACK_SLOTS.n = (out.slots || body.slots || []).length;
         play.dirty = true;
-        if (play.node) await start();
+        if (play.node) await restart();
         return json(out);
       }
 
@@ -1720,7 +1816,9 @@
         e.u8().set(text, ptr);
         const out = e.said(e.ex.rack_param(ptr, text.length));
         play.dirty = true;
-        if (play.node && body.live !== true) await start();
+        // Same rule as the stretch tray: a live drag of a rack control is a
+        // sound to be heard, not a number to be stored.
+        if (play.node) await restart();
         return json(out);
       }
 
