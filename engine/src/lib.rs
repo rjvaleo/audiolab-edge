@@ -175,9 +175,12 @@ pub extern "C" fn export_aiff(bits: u32) -> usize {
         None => return error("no document is open"),
     };
 
+    // The engine the picker asked for, the same as `render` — see the note
+    // there. An export that used a different stretcher from the one being
+    // auditioned would be a different sound to the one heard.
     let audio = SRC.with(|s| {
         let src = s.borrow();
-        fx::grain::granular(&src, ch, rate, st.ratio, st.semitones, st.window_ms, &st.grain)
+        st.process(&src, ch, rate)
     });
     if audio.is_empty() {
         return error("there is nothing to export");
@@ -877,9 +880,21 @@ pub extern "C" fn render() -> usize {
         Some(t) => t,
         None => return 0,
     };
+    // ── the engine the picker asked for ──
+    //
+    // `Stretch::process` dispatches on `st.algorithm`, and the five buttons on
+    // the stretch tray are the five arms of that match. Calling
+    // `grain::granular` here instead ran the grain cloud whatever the tray
+    // said — and the tray's default is WSOLA, so the ordinary case was a
+    // picker naming one engine and a render using another.
+    //
+    // It also picks up the three things only the dispatcher does: `layered`
+    // wrapped around the non-granular engines, the cloud laid over them, and
+    // the identity short-circuit that hands back the input untouched when
+    // nothing has been asked for.
     let mut out = SRC.with(|s| {
         let src = s.borrow();
-        fx::grain::granular(&src, ch, rate, st.ratio, st.semitones, st.window_ms, &st.grain)
+        st.process(&src, ch, rate)
     });
 
     // ── through the rack ──

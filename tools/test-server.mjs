@@ -260,6 +260,58 @@ try {
   ok('  and not silence', out.some((v) => Math.abs(v) > 1e-4),
      `peak ${Math.max(...[...out].map(Math.abs)).toFixed(4)}`);
 
+  // ── the engine picker picks an engine ──
+  //
+  // Five buttons on the stretch tray, and for a while all five rendered the
+  // same grain cloud: the engine called `grain::granular` directly instead of
+  // `Stretch::process`, which is the function that dispatches on `algorithm`.
+  // Nothing caught it, because a stretch that runs is indistinguishable from
+  // the right stretch unless something compares two of them.
+  //
+  // So this compares all five. Distinct output is the whole assertion — what
+  // each engine *sounds* like is the vendored crate's 624 tests' business, and
+  // they already cover it.
+  const ALGS = ['wsola', 'vocoder', 'pvsola', 'hybrid', 'granular'];
+  const digest = (buf) => {
+    // FNV-1a over the bytes. A hash, not a checksum with opinions.
+    let h = 0x811c9dc5;
+    const b = new Uint8Array(buf);
+    for (let i = 0; i < b.length; i += 97) { h ^= b[i]; h = Math.imul(h, 0x01000193) >>> 0; }
+    return h.toString(16).padStart(8, '0');
+  };
+  const renders = new Map();
+  for (const algorithm of ALGS) {
+    const body = new TextEncoder().encode(JSON.stringify({ op: 'stretch', algorithm, ratio: 2 }));
+    const at = ex.scratch(Math.ceil(body.length / 4));
+    new Uint8Array(ex.memory.buffer).set(body, at);
+    const said2 = said(ex.doc_apply(at, body.length));
+    if (said2 && said2.error) { renders.set(algorithm, `refused: ${said2.error}`); continue; }
+    const len = ex.render();
+    const buf = ex.memory.buffer.slice(ex.out_ptr(), ex.out_ptr() + len * 4);
+    renders.set(algorithm, `${len / CH}f ${digest(buf)}`);
+  }
+  const distinct = new Set(renders.values());
+  ok(`the engine picker picks an engine`, distinct.size === ALGS.length,
+     distinct.size === ALGS.length
+       ? `${ALGS.length} engines, ${distinct.size} different renders`
+       : `${ALGS.length} engines but only ${distinct.size} distinct: ` +
+         [...renders].map(([a, d]) => `${a}=${d}`).join(', '));
+
+  // Every engine stretched to the length that was asked for. A stretcher that
+  // returns the input untouched would pass the test above on its hash alone.
+  const wrongLength = [...renders].filter(([, d]) => !d.startsWith(`${FRAMES * 2}f`));
+  ok('  and every one of them doubled the length', wrongLength.length === 0,
+     wrongLength.length ? wrongLength.map(([a, d]) => `${a}: ${d}`).join(', ')
+                        : `all ${ALGS.length} returned ${FRAMES * 2} frames`);
+
+  // Back to unity, so nothing below inherits a 2x document.
+  {
+    const body = new TextEncoder().encode(JSON.stringify({ op: 'stretch', ratio: 1 }));
+    const at = ex.scratch(Math.ceil(body.length / 4));
+    new Uint8Array(ex.memory.buffer).set(body, at);
+    ex.doc_apply(at, body.length);
+  }
+
   // ── the readouts the interface draws from ──
   const BANDS = 256;
   const mPtr = ex.scratch(src.length);
