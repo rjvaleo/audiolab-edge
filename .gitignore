@@ -2,3 +2,13 @@ target/
 .spin/
 *.wasm
 .DS_Store
+
+# `ingest/` is a staging area — originals go in, Opus comes out into `sounds/`,
+# and only `sounds/` ships. The originals are wav and aiff at full rate: the
+# seven that made the current library are 32 MB against their 1.6 MB of Opus,
+# and this repository's whole claim is that it clones small.
+#
+# `tools/ingest.mjs` deletes them once converted unless it is given `--keep`.
+# They are kept here now, so this is what stops them being committed.
+ingest/*
+!ingest/README.md

@@ -47,11 +47,55 @@ fn takes_gzip(req: &Request) -> bool {
         .unwrap_or(false)
 }
 
+/// Percent-decode a request path, if there is anything in it to decode.
+///
+/// The library keeps the names people gave their files — `piano pad sub.opus`,
+/// `Inverted Clarity [2021-10-16 223741].opus` — because the name is what the
+/// file list shows and a person chose it. A browser encodes those before they
+/// reach here, so the table is matched against `/sounds/piano%20pad%20sub.opus`
+/// and misses every sound with a space in it.
+///
+/// Returns `None` when there is no `%`, which is every request but these.
+fn percent_decoded(path: &str) -> Option<String> {
+    if !path.contains('%') {
+        return None;
+    }
+    let hex = |c: u8| match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    };
+    let raw = path.as_bytes();
+    let mut out = Vec::with_capacity(raw.len());
+    let mut i = 0;
+    while i < raw.len() {
+        match (raw.get(i), raw.get(i + 1).copied().and_then(hex), raw.get(i + 2).copied().and_then(hex)) {
+            (Some(b'%'), Some(hi), Some(lo)) => {
+                out.push((hi << 4) | lo);
+                i += 3;
+            }
+            _ => {
+                out.push(raw[i]);
+                i += 1;
+            }
+        }
+    }
+    // A malformed escape that is not UTF-8 is not a route either.
+    String::from_utf8(out).ok()
+}
+
 #[http_component]
 fn handle(req: Request) -> anyhow::Result<impl IntoResponse> {
     let path = req.path();
 
-    let Some(&(_, bytes, kind, gzipped)) = ASSETS.iter().find(|(r, ..)| *r == path) else {
+    // Exact first, decoded second. Nothing in the table contains a `%`, so the
+    // second pass only ever runs for a name that was encoded on the way here.
+    let found = ASSETS.iter().find(|(r, ..)| *r == path).or_else(|| {
+        percent_decoded(path).and_then(|d| ASSETS.iter().find(|(r, ..)| *r == d))
+    });
+
+    let Some(&(_, bytes, kind, gzipped)) = found else {
         return Ok(Response::builder()
             .status(404)
             .header("content-type", "text/plain; charset=utf-8")
