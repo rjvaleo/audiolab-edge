@@ -26,11 +26,19 @@ to differ. This is not.
 | `wire/rack.rs` | `core/crates/server/src/rack.rs` | 1 | 884 |
 | `wire/persist.rs` | `core/crates/server/src/persist.rs` | 1 | 812 |
 | `wire/docs.rs` | `core/crates/server/src/docs.rs` | 1 | 533 |
+| `rt/render.rs` | `core/crates/engine/src/render.rs` | 1 | 423 |
+| `rt/stretcher.rs` | `core/crates/engine/src/stretcher.rs` | 1 | 672 |
 
 The three crates are ordinary path dependencies. The four `wire/` files are
 `#[path]`-included as modules of `audiolab-engine` itself, because they live
 inside the `server` crate and depending on that crate costs 14.07 MB —
 `server` pulls `yamnet`, and `yamnet` pulls `tract-onnx`. See `engine/src/lib.rs`.
+
+The two `rt/` files are included the same way, for a different reason: they
+are the real-time engine, and the crate they live in owns the sound card. They
+need `fx` and each other and nothing else, so they travel and the device
+does not. `stretcher.rs` runs all five engines a block at a time;
+`render.rs` is the granular one it calls.
 
 ## Checking
 

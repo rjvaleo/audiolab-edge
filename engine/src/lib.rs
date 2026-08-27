@@ -42,6 +42,29 @@ use std::cell::RefCell;
 // free to differ; this is not. `tools/sync-core.sh` re-copies,
 // `vendor/SOURCE.md` records which commit from, and `docs/EDGE-PARITY.md` in
 // the desktop repository is the method.
+// ── the real-time engine ──
+//
+// Two files out of the desktop's `engine` crate, taken the same way and for a
+// related reason: that crate owns the sound card. `device.rs` is cpal and
+// `transport.rs` is a playback state machine built around a hardware callback,
+// neither of which exists in a browser — but the part that *makes the sound*
+// depends on none of it.
+//
+// `render.rs` is the granular block renderer: grains as voices in a fixed pool
+// of 1024, parameters frozen at each grain's birth so a control moved now
+// cannot step the envelope of one already sounding, and voices summed in spawn
+// order so it agrees with the offline render bit for bit. `stretcher.rs` drives
+// all five engines a block at a time and crossfades over 1024 frames when you
+// switch between them.
+//
+// Their whole dependency surface is `fx`, each other, and `std::sync::Arc` —
+// checked, not assumed. Nothing here is written for this build; it is the
+// engine the desktop has been playing through all along.
+#[path = "../vendor/rt/render.rs"]
+pub mod render;
+#[path = "../vendor/rt/stretcher.rs"]
+pub mod stretcher;
+
 #[path = "../vendor/wire/json.rs"]
 mod json;
 #[path = "../vendor/wire/rack.rs"]

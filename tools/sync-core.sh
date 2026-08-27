@@ -35,6 +35,14 @@ VENDOR="$HERE/engine/vendor"
 
 CRATES=(audio-core fx edit)
 WIRE=(json rack persist docs)
+# The real-time engine: two files out of `engine`, not the crate.
+#
+# `render.rs` is the granular block renderer and `stretcher.rs` drives all five
+# engines a block at a time. Between them they need `fx` and each other and
+# nothing else — no cpal, no device, no transport. The rest of that crate does
+# not travel and does not need to: taken this way they become modules of
+# `audiolab-engine`, the same arrangement and the same reason as `wire/`.
+RT=(render stretcher)
 
 MODE="sync"
 [[ "${1:-}" == "--check" ]] && MODE="check"
@@ -70,6 +78,12 @@ if [[ "$MODE" == "check" ]]; then
       drift=1
     fi
   done
+  for f in "${RT[@]}"; do
+    if ! cmp -s "$CORE/crates/engine/src/$f.rs" "$VENDOR/rt/$f.rs"; then
+      echo "DRIFT  rt/$f.rs"
+      drift=1
+    fi
+  done
   if [[ $drift -eq 0 ]]; then
     echo "engine/vendor/ matches $REPO — no drift."
     exit 0
@@ -81,9 +95,10 @@ fi
 
 # ── sync ─────────────────────────────────────────────────────────────────────
 rm -rf "$VENDOR"
-mkdir -p "$VENDOR/wire"
+mkdir -p "$VENDOR/wire" "$VENDOR/rt"
 for c in "${CRATES[@]}"; do cp -R "$CORE/crates/$c" "$VENDOR/$c"; done
 for f in "${WIRE[@]}"; do cp "$CORE/crates/server/src/$f.rs" "$VENDOR/wire/$f.rs"; done
+for f in "${RT[@]}"; do cp "$CORE/crates/engine/src/$f.rs" "$VENDOR/rt/$f.rs"; done
 
 # Provenance. A vendored copy with no record of where it came from is the thing
 # that turns into folklore in six months.
@@ -93,7 +108,8 @@ WHEN="$(git -C "$REPO" log -1 --format=%cI HEAD 2>/dev/null || echo unknown)"
 SUBJ="$(git -C "$REPO" log -1 --format=%s HEAD 2>/dev/null || echo unknown)"
 DIRTY="$(git -C "$REPO" status --porcelain \
            core/crates/audio-core core/crates/fx core/crates/edit \
-           core/crates/server/src/{json,rack,persist,docs}.rs 2>/dev/null | wc -l | tr -d ' ')"
+           core/crates/server/src/{json,rack,persist,docs}.rs \
+           core/crates/engine/src/{render,stretcher}.rs 2>/dev/null | wc -l | tr -d ' ')"
 
 {
   echo "# Where this came from"
@@ -129,11 +145,21 @@ DIRTY="$(git -C "$REPO" status --porcelain \
     l=$(wc -l < "$VENDOR/wire/$f.rs" | tr -d ' ')
     echo "| \`wire/$f.rs\` | \`core/crates/server/src/$f.rs\` | 1 | $l |"
   done
+  for f in "${RT[@]}"; do
+    l=$(wc -l < "$VENDOR/rt/$f.rs" | tr -d ' ')
+    echo "| \`rt/$f.rs\` | \`core/crates/engine/src/$f.rs\` | 1 | $l |"
+  done
   echo
   echo "The three crates are ordinary path dependencies. The four \`wire/\` files are"
   echo "\`#[path]\`-included as modules of \`audiolab-engine\` itself, because they live"
   echo "inside the \`server\` crate and depending on that crate costs 14.07 MB —"
   echo "\`server\` pulls \`yamnet\`, and \`yamnet\` pulls \`tract-onnx\`. See \`engine/src/lib.rs\`."
+  echo
+  echo "The two \`rt/\` files are included the same way, for a different reason: they"
+  echo "are the real-time engine, and the crate they live in owns the sound card. They"
+  echo "need \`fx\` and each other and nothing else, so they travel and the device"
+  echo "does not. \`stretcher.rs\` runs all five engines a block at a time;"
+  echo "\`render.rs\` is the granular one it calls."
   echo
   echo "## Checking"
   echo
